@@ -1,0 +1,295 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reference palette, with darker companions for readable text and controls. */
+:root {
+  --brand-lime: #d0e740;
+  --brand-blue: #2794dd;
+  --brand-green: #15c164;
+  --brand-mint: #dafbe9;
+  --action-ink: #16251c;
+  --ground: #f3fbf6;
+  --grid: rgba(39, 148, 221, 0.05);
+  --surface: #ffffff;
+  --surface-2: #dafbe9;
+  --ink: #14291f;
+  --ink-2: #3f5c50;
+  --ink-3: #526d60;
+  --rule: #c6e2d2;
+  --rule-2: #a0c5b1;
+  --accent: #16669a;
+  --accent-soft: #dafbe9;
+  --accent-ink: #ffffff;
+  --crit: #b93a28;
+  --crit-soft: #fbe7e3;
+  --warn: #9a6608;
+  --warn-soft: #faefd9;
+  --ok: #137446;
+  --ok-soft: #dafbe9;
+  --shadow: 0 1px 2px rgba(20, 41, 31, 0.04), 0 10px 28px -20px rgba(20, 76, 49, 0.3);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ground: #0d1915;
+    --grid: rgba(39, 148, 221, 0.06);
+    --surface: #14251e;
+    --surface-2: #1b3228;
+    --ink: #eaf8ef;
+    --ink-2: #b8d1c3;
+    --ink-3: #95b4a3;
+    --rule: #2b4538;
+    --rule-2: #42644f;
+    --accent: #7bc5f3;
+    --accent-soft: #173b30;
+    --accent-ink: #0d1915;
+    --crit: #ec8571;
+    --crit-soft: #2e1b18;
+    --warn: #dca648;
+    --warn-soft: #2a2113;
+    --ok: #5ce39a;
+    --ok-soft: #173b2a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -20px rgba(0, 0, 0, 0.9);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --ground: #0d1915;
+  --grid: rgba(39, 148, 221, 0.06);
+  --surface: #14251e;
+  --surface-2: #1b3228;
+  --ink: #eaf8ef;
+  --ink-2: #b8d1c3;
+  --ink-3: #95b4a3;
+  --rule: #2b4538;
+  --rule-2: #42644f;
+  --accent: #7bc5f3;
+  --accent-soft: #173b30;
+  --accent-ink: #0d1915;
+  --crit: #ec8571;
+  --crit-soft: #2e1b18;
+  --warn: #dca648;
+  --warn-soft: #2a2113;
+  --ok: #5ce39a;
+  --ok-soft: #173b2a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -20px rgba(0, 0, 0, 0.9);
+  color-scheme: dark;
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(12px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  /* Stop the pull-to-refresh / rubber-band bounce fighting in-app scrolling,
+     and kill the grey tap flash Android draws over every button. */
+  html {
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  ::placeholder {
+    color: var(--ink-3);
+  }
+}
+
+@layer components {
+  .tabnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .eyebrow {
+    @apply font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-3;
+  }
+  .field {
+    @apply w-full rounded-lg border border-rule bg-surface px-3 outline-none transition;
+    /* 16px is the threshold below which Android and iOS zoom the viewport on
+       focus. Anything smaller makes every form feel broken on a phone. */
+    @apply min-h-[44px] py-2.5 text-[16px] sm:min-h-0 sm:py-2 sm:text-[14px];
+  }
+  textarea.field {
+    @apply min-h-[88px];
+  }
+  .field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .page-header {
+    position: relative;
+  }
+  .page-header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 112px;
+    height: 4px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--brand-lime) 0 34%, var(--brand-blue) 34% 67%, var(--brand-green) 67%);
+  }
+  /* Icon-only controls. A 13px trash glyph is not a target; the box around
+     it is, and on a phone that box has to be finger-sized. */
+  /* A 12px text link is a 14px-tall target. On a phone it gets a 44px row
+     without changing how the header looks, by growing into its own padding. */
+  .tap-link {
+    @apply inline-flex items-center text-accent;
+    @apply min-h-[44px] -my-3 py-3 sm:min-h-0 sm:my-0 sm:py-0;
+  }
+  /* Same idea as .tap-link for a line of text that acts as a button: it grows
+     into its own padding on a phone, so the row looks unchanged but the
+     target is a full 44px tall. */
+  .tap-text {
+    @apply block min-h-[44px] -my-2.5 py-2.5 text-left sm:min-h-0 sm:my-0 sm:py-0;
+  }
+  .icon-btn {
+    @apply flex shrink-0 items-center justify-center rounded text-ink-3 transition;
+    @apply h-11 w-11 sm:h-8 sm:w-8;
+  }
+  .icon-btn:hover {
+    @apply bg-surface-2 text-ink;
+  }
+  .icon-btn-danger:hover {
+    @apply bg-surface-2 text-crit;
+  }
+  /* A range slider's track is 16px tall; the gesture needs more than that. */
+  input[type='range'] {
+    @apply h-11 w-full cursor-pointer bg-transparent sm:h-6;
+    accent-color: var(--accent);
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-rule bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-ink-2;
+  }
+}
+
+/* A grid item's default `min-width: auto` means one wide child — a chart, a
+   long unbroken title — sets the column's minimum and pushes the page
+   sideways on a narrow phone. Everything in this app that genuinely needs to
+   be wider than its column scrolls inside its own container, so items are
+   free to shrink. */
+.grid > * {
+  min-width: 0;
+}
+
+/* KaTeX sizing inside notes and cards */
+.katex {
+  font-size: 1.02em;
+}
+.katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Markdown output. `min-width: 0` and the wrapping rules below matter on a
+   360px phone: a long formula or an unbroken URL would otherwise widen the
+   whole page rather than scrolling inside its own block. */
+.md { min-width: 0; overflow-wrap: anywhere; }
+.md .md-scroll { @apply mb-3 max-w-full overflow-x-auto; }
+.md .md-scroll > .md-table { @apply mb-0; }
+.md .katex { max-width: 100%; display: inline-block; overflow-x: auto; overflow-y: hidden; vertical-align: bottom; }
+.md .katex-display > .katex { display: block; }
+.md h1 { @apply mb-2 mt-4 text-xl; }
+.md h2 { @apply mb-2 mt-4 text-lg; }
+.md h3 { @apply mb-1 mt-3 text-base; }
+.md p { @apply mb-3; }
+.md ul { @apply mb-3 list-disc pl-5; }
+.md ol { @apply mb-3 list-decimal pl-5; }
+.md li { @apply mb-1; }
+.md code { @apply rounded border border-rule bg-surface-2 px-1 py-px font-mono text-[0.88em]; }
+.md pre { @apply mb-3 overflow-x-auto rounded border border-rule bg-surface-2 p-3; }
+.md pre code { @apply border-0 bg-transparent p-0; }
+.md blockquote { @apply mb-3 border-l-2 border-rule-2 pl-3 text-ink-2; }
+.md a { @apply text-accent underline; }
+.md strong { @apply font-semibold; }
+.md .md-table { @apply mb-3 w-full border-collapse text-[14px]; }
+.md .md-table th { @apply border-b border-rule pb-2 pr-3 text-left text-[10.5px] uppercase tracking-[0.09em] text-ink-3; }
+.md .md-table td { @apply border-b border-rule py-2 pr-3 align-top; }
+.md hr { @apply my-4 border-rule; }
+
+/* Scrollbars stay quiet */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--rule-2); border-radius: 10px; border: 3px solid var(--ground); }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Print: the resume preview and the formula sheet are the only things worth
+   putting on paper, so everything else steps out of the way. The classic
+   visibility trick, because it needs no class on the app chrome. */
+@media print {
+  body::before { display: none; }
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  .print-root, .print-root * { visibility: visible; }
+  .print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+    background: #fff;
+    color: #111;
+  }
+  .print-root a { color: #111; text-decoration: none; }
+  .no-print, .no-print * { display: none !important; }
+  @page { margin: 16mm; }
+}

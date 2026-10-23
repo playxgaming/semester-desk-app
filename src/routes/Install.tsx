@@ -176,7 +176,7 @@ export default function Install() {
       <Note title="Ready before you go offline">
         Open the app online once and let it finish loading before going offline. Your study data is stored on this device. AI Tutor, scanning and optional sync need an internet connection; AI features also need a configured AI server.
       </Note>
-      <p className="text-[13px] text-ink-3">Moving to a new device? <Link to="/settings" className="text-accent underline underline-offset-4">Export a backup in Settings</Link> and import it on your new device.</p>
+      <p className="text-[13px] text-ink-3">Moving to a new device? <Link to="/settings" className="inline-flex min-h-[44px] items-center text-accent underline underline-offset-4">Export a backup in Settings</Link> and import it on your new device.</p>
     </>
   )
 }

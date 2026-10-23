@@ -46,6 +46,11 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to the retired "tools" package. Install only
+          # the platform and build tools required by the checked-in project.
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          log-accepted-android-sdk-licenses: false
 
       - name: Copy the build into the Android project
         run: npx cap sync android

@@ -7,7 +7,7 @@
 import { attendanceStats } from '../src/lib/attendance'
 import { gradeCourse, whatDoINeed, computeGpa } from '../src/lib/grades'
 import { schedule, expandCloze } from '../src/lib/srs'
-import { buildPlan } from '../src/lib/planner'
+import { buildPlan, catchUp } from '../src/lib/planner'
 import { renderMarkdown } from '../src/lib/markdown'
 import { advanceRecurring, burnDown, byCategory, creepers, habitStreak } from '../src/lib/money'
 import { effortMinutes, queueItems } from '../src/lib/pipeline'
@@ -21,7 +21,7 @@ import { buildSchedule, inQuietHours, numericId } from '../src/lib/notify'
 import { critique, weeklyReview } from '../src/lib/insights'
 import { buildQuiz, gradeQuiz, plainify } from '../src/lib/quiz'
 import { extractCards } from '../src/lib/extract'
-import { cellStatus, nextStatus, rowsFor, slotsFor } from '../src/db/attendance'
+import { cellStatus, nextStatus, rowsFor, slotsFor, slotsOnDate } from '../src/db/attendance'
 import { bySemester, cumulative } from '../src/lib/grades'
 import { shouldSnapshot } from '../src/db/history'
 import { alive } from '../src/db/mutate'
@@ -514,6 +514,31 @@ const tombstoned = { id: 'x', deleted_at: new Date().toISOString(), updated_at: 
 const living = { id: 'y', deleted_at: null, updated_at: '' }
 check('tombstoned rows are hidden from every read', alive([tombstoned, living]).map((r) => r.id), ['y'])
 check('clearing the tombstone brings it back', alive([{ ...tombstoned, deleted_at: null }]).length, 1)
+
+/* ── Regressions from the full category journey audit ──────────────────── */
+check('zero attendance requirement remains satisfied after absences', attendanceStats(att(0, 4), 0).meets, true)
+check('zero attendance requirement has an unlimited allowance', attendanceStats(att(0, 4), 0).canSkip, Infinity)
+check('perfect attendance at a 100% requirement needs no recovery', attendanceStats(att(4, 0), 1).mustAttend, 0)
+const auditSlot: TimetableSlot = { id: 'audit-slot', ...base, course_id: 'c', weekday: 2, start: '09:00', end: '15:00', room: '', kind: 'lecture' }
+const auditHoliday = { id: 'audit-holiday', ...base, date: '2026-09-01', slot_id: null, kind: 'holiday' as const, new_start: null, new_end: null, note: '' }
+check('a whole-day holiday removes the recurring attendance prompts', slotsOnDate([auditSlot], '2026-09-01', [auditHoliday]).length, 0)
+check('one cancellation removes only its own slot', slotsOnDate([auditSlot, { ...auditSlot, id: 'other' }], '2026-09-01', [{ ...auditHoliday, kind: 'cancelled', slot_id: auditSlot.id }]).map((s) => s.id), ['other'])
+const auditInput = { from: '2026-09-01', days: 1, capacityMin: 120, courses: [course('c', 4)], topics: [topic('audit-topic', 120, 0)], tasks: [] as StudyTask[], slots: [] as TimetableSlot[], existing: [] as StudySession[] }
+const auditBlock: StudySession = { id: 'audit-block', ...base, course_id: 'c', topic_id: 'audit-topic', task_id: null, date: '2026-09-01', kind: 'study', planned_min: 45, actual_min: 0, status: 'planned', auto: false }
+const reservedPlan = buildPlan({ ...auditInput, existing: [{ ...auditBlock, planned_min: 60 }] })
+check('manual topic blocks are not scheduled a second time', reservedPlan.sessions.reduce((sum, s) => sum + s.planned_min, 0), 60)
+check('manual reserved work counts as scheduled work', reservedPlan.diagnostics.scheduledMin, 120)
+const completedPlan = buildPlan({ ...auditInput, existing: [{ ...auditBlock, actual_min: 45, status: 'done' }] })
+check('completed blocks still consume today’s capacity on rebuild', completedPlan.days[0].plannedMin, 120)
+check('completed work is subtracted before planning remaining effort', completedPlan.sessions.reduce((sum, s) => sum + s.planned_min, 0), 75)
+const holidayPlan = buildPlan({ ...auditInput, slots: [auditSlot], exceptions: [auditHoliday] })
+check('holiday class hours no longer reduce the study capacity', holidayPlan.days[0].capacityMin, 120)
+check('archived course topics cannot be planned', buildPlan({ ...auditInput, courses: [{ ...course('c', 4), archived: true }] }).sessions.length, 0)
+check('a finished old exam no longer blocks new study', buildPlan({ ...auditInput, tasks: [{ id: 'old-exam', ...base, course_id: 'c', title: 'Old exam', type: 'exam', due_at: '2026-08-01T09:00:00Z', weight_pct: 100, est_minutes: 60, status: 'done', notes: '' }] }).sessions.length > 0, true)
+const catchUpDays = [{ date: '2026-09-01', capacityMin: 120, classMin: 0, fixedMin: 0, plannedMin: 90, sessions: [] as StudySession[] }]
+check('catch-up respects the saved calendar capacity', catchUp([{ ...auditBlock, planned_min: 45 }], catchUpDays).moved.length, 0)
+check('catch-up does not mutate the preview passed into it', catchUpDays[0].plannedMin, 90)
+check('catch-up refuses to move task work past its deadline', catchUp([{ ...auditBlock, task_id: 'expired', planned_min: 15 }], catchUpDays, new Map([['expired', '2026-08-31']])).moved.length, 0)
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll checks passed')
 process.exit(failures ? 1 : 0)

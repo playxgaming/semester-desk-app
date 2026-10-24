@@ -635,8 +635,13 @@ Poisson approximates the binomial when $n$ is large and $p$ small, with $\\lambd
 }
 
 export async function wipeEverything(): Promise<void> {
+  // Native alarms live outside IndexedDB; clearing records must clear their
+  // reminders too. Stop before deleting if the platform cannot cancel them.
+  const { applySchedule } = await import('@/lib/notify')
+  await applySchedule([])
   await db.delete()
-  localStorage.removeItem(SEED_FLAG)
+  const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+  for (const key of keys) if (key?.startsWith('semester-desk:')) localStorage.removeItem(key)
   localStorage.setItem(SEED_FLAG, '1') // do not re-seed after a deliberate wipe
   window.location.reload()
 }

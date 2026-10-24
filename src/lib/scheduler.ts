@@ -1,6 +1,7 @@
 import { db } from '@/db/db'
 import { alive, ensureProfile } from '@/db/mutate'
 import { applySchedule, buildSchedule, permissionState } from './notify'
+import { dayKey, today as localToday } from './date'
 
 /**
  * Rebuild the device's reminder schedule from whatever is currently in the
@@ -89,7 +90,7 @@ export async function undoRebalance(): Promise<number> {
  */
 export async function overnightRebalance(): Promise<number> {
   const KEY = 'semester-desk:rebalanced'
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localToday()
   try {
     if (localStorage.getItem(KEY) === today) return 0
   } catch {
@@ -109,11 +110,12 @@ export async function overnightRebalance(): Promise<number> {
   }
 
   const { buildPlan, catchUp } = await import('./planner')
-  const [courses, topics, tasks, slots] = await Promise.all([
+  const [courses, topics, tasks, slots, exceptions] = await Promise.all([
     db.courses.toArray(),
     db.topics.toArray(),
     db.tasks.toArray(),
     db.timetable_slots.toArray(),
+    db.timetable_exceptions.toArray(),
   ])
 
   const plan = buildPlan({
@@ -124,11 +126,15 @@ export async function overnightRebalance(): Promise<number> {
     topics: alive(topics),
     tasks: alive(tasks),
     slots: alive(slots),
+    exceptions: alive(exceptions),
     existing: sessions,
   })
 
   const before = new Map(missed.map((s) => [s.id, s.date]))
-  const { moved } = catchUp(missed, plan.days)
+  const active = new Set(alive(courses).filter((c) => !c.archived).map((c) => c.id))
+  const calendar = plan.days.map((day) => ({ ...day, plannedMin: sessions.filter((s) => s.date === day.date && s.status !== 'skipped' && (!s.course_id || active.has(s.course_id))).reduce((sum, s) => sum + (s.status === 'done' ? s.actual_min : s.planned_min), 0) }))
+  const deadlines = new Map(alive(tasks).filter((t) => t.due_at).map((t) => [t.id, dayKey(t.due_at!)]))
+  const { moved } = catchUp(missed.filter((s) => !s.course_id || active.has(s.course_id)), calendar, deadlines)
   const { patch } = await import('@/db/mutate')
   for (const s of moved) await patch('sessions', s.id, { date: s.date })
 

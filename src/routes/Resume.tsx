@@ -35,7 +35,11 @@ function ItemForm({ item, onDone }: { item?: ResumeItem; onDone: () => void }) {
       onSubmit={async (e) => {
         e.preventDefault()
         if (!form.title.trim()) return
-        await put('resume_items', { ...form, bullets: form.bullets.filter((b) => b.trim()) })
+        if (form.start && form.end && form.end < form.start) {
+          notify('The end month must be on or after the start month.', 'warn')
+          return
+        }
+        await put('resume_items', { ...form, title: form.title.trim(), bullets: form.bullets.map((b) => b.trim()).filter(Boolean) })
         notify('Saved to your record')
         onDone()
       }}
@@ -71,12 +75,14 @@ function ItemForm({ item, onDone }: { item?: ResumeItem; onDone: () => void }) {
         <Field
           label="Started"
           type="month"
+          max={form.end?.slice(0, 7)}
           value={form.start?.slice(0, 7) ?? ''}
           onChange={(e) => setForm({ ...form, start: e.target.value ? `${e.target.value}-01` : null })}
         />
         <Field
           label="Ended"
           type="month"
+          min={form.start?.slice(0, 7)}
           hint="Leave empty for ongoing."
           value={form.end?.slice(0, 7) ?? ''}
           onChange={(e) => setForm({ ...form, end: e.target.value ? `${e.target.value}-01` : null })}
@@ -142,7 +148,7 @@ export default function Resume() {
   const [editing, setEditing] = useState<ResumeItem | undefined>()
 
   useEffect(() => {
-    if (!versionId && versions.length) setVersionId(versions[0].id)
+    if ((!versionId || !versions.some((version) => version.id === versionId)) && versions.length) setVersionId(versions[0].id)
   }, [versions, versionId])
 
   const version = versions.find((v) => v.id === versionId) ?? null
@@ -324,8 +330,13 @@ export default function Resume() {
                   </Button>
                   <Button
                     onClick={async () => {
-                      await navigator.clipboard?.writeText(resumeMarkdown(doc, profile))
-                      notify('Copied as markdown')
+                      try {
+                        if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
+                        await navigator.clipboard.writeText(resumeMarkdown(doc, profile))
+                        notify('Copied as markdown')
+                      } catch {
+                        notify('Clipboard access is unavailable. Use Markdown to download a copy instead.', 'warn')
+                      }
                     }}
                   >
                     <Copy size={14} /> Copy

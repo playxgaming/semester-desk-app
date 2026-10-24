@@ -4,6 +4,7 @@ import { Badge, Bar, Button, Card, Dot, Empty, Note, PageHeader, Stat } from '@/
 import {
   useCourseMap,
   useCourses,
+  useExceptions,
   useProfile,
   useSessions,
   useSlots,
@@ -11,7 +12,7 @@ import {
   useTopics,
 } from '@/hooks/data'
 import { buildPlan, catchUp, type PlanResult } from '@/lib/planner'
-import { humanMinutes, prettyDay, today } from '@/lib/date'
+import { dayKey, humanMinutes, prettyDay, today } from '@/lib/date'
 import { patch, put, remove, saveProfile } from '@/db/mutate'
 import { clearRebalance, lastRebalance, undoRebalance } from '@/lib/scheduler'
 import type { StudySession } from '@/db/db'
@@ -25,6 +26,7 @@ export default function Planner() {
   const topics = useTopics()
   const tasks = useTasks()
   const slots = useSlots()
+  const exceptions = useExceptions()
   const sessions = useSessions()
   const byId = useCourseMap()
   const notify = useUi((s) => s.notify)
@@ -43,9 +45,10 @@ export default function Planner() {
         topics,
         tasks,
         slots,
+        exceptions,
         existing: sessions,
       }),
-    [horizon, profile.daily_capacity_min, courses, topics, tasks, slots, sessions],
+    [horizon, profile.daily_capacity_min, courses, topics, tasks, slots, exceptions, sessions],
   )
 
   const key = today()
@@ -65,7 +68,7 @@ export default function Planner() {
     setBusy(true)
     try {
       // auto-written sessions are ours to replace; hand-made ones stay
-      const stale = sessions.filter((s) => s.auto && s.status === 'planned' && s.date >= key)
+      const stale = sessions.filter((s) => s.auto && s.status === 'planned' && s.actual_min === 0 && s.date >= key)
       for (const s of stale) await remove('sessions', s.id)
       for (const s of preview.sessions) await put('sessions', s)
       notify(`Planned ${preview.sessions.length} blocks over ${horizon} days`)
@@ -78,7 +81,11 @@ export default function Planner() {
     if (!missed.length) return
     setBusy(true)
     try {
-      const { moved, dropped } = catchUp(missed, preview.days)
+      // A preview is unsaved work. Catch up against the actual calendar,
+      // otherwise a full preview prevents moving blocks into an empty day.
+      const calendar = preview.days.map((day) => ({ ...day, plannedMin: sessions.filter((s) => s.date === day.date && s.status !== 'skipped').reduce((sum, s) => sum + (s.status === 'done' ? s.actual_min : s.planned_min), 0) }))
+      const deadlines = new Map(tasks.filter((t) => t.due_at).map((t) => [t.id, dayKey(t.due_at!)]))
+      const { moved, dropped } = catchUp(missed, calendar, deadlines)
       for (const s of moved) await patch('sessions', s.id, { date: s.date })
       notify(
         dropped.length

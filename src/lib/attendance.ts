@@ -32,21 +32,25 @@ export function attendanceStats(rows: Attendance[], threshold: number): Attendan
   const meets = pct === null ? true : pct >= threshold
 
   // present / (held + k) ≥ t  ⇒  k ≤ present/t − held
-  const canSkip = held === 0 ? 0 : Math.max(0, Math.floor(present / threshold - held))
+  const canSkip = threshold <= 0 ? Number.POSITIVE_INFINITY : held === 0 ? 0 : Math.max(0, Math.floor(present / threshold - held + 1e-9))
   // (present + m) / (held + m) ≥ t  ⇒  m ≥ (t·held − present) / (1 − t)
   const mustAttend =
-    threshold >= 1
+    meets ? 0 : threshold >= 1
       ? Number.POSITIVE_INFINITY
       : Math.max(0, Math.ceil((threshold * held - present) / (1 - threshold)))
 
   let message: string
-  if (held === 0) {
+  if (threshold <= 0) {
+    message = 'No attendance requirement for this course.'
+  } else if (held === 0) {
     message = 'No classes logged yet.'
   } else if (meets) {
     message =
       canSkip > 0
         ? `You can miss ${canSkip} more and stay above ${Math.round(threshold * 100)}%.`
         : `Exactly at the line — the next miss drops you below ${Math.round(threshold * 100)}%.`
+  } else if (!Number.isFinite(mustAttend)) {
+    message = 'A 100% requirement cannot be recovered after a missed class. Check your institution’s exception policy.'
   } else {
     message = `Below the line. Attend the next ${mustAttend} in a row to get back to ${Math.round(threshold * 100)}%.`
   }

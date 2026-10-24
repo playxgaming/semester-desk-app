@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pause, Play, RotateCcw, Zap } from 'lucide-react'
 import { Badge, Button, Card, Empty, PageHeader, Panel, Select, Stat } from '@/components/ui'
-import { useCourseMap, useCourses, useFocusToday, useSessionsOn, useTasks } from '@/hooks/data'
+import { useCourseMap, useCourses, useFocusToday, useTasks } from '@/hooks/data'
 import { humanMinutes, today } from '@/lib/date'
 import { patch, put } from '@/db/mutate'
 import { uid } from '@/lib/id'
 import { useUi } from '@/store/ui'
 import { buzz, tap, thud } from '@/lib/haptics'
+import { db } from '@/db/db'
+import { alive } from '@/db/mutate'
+import { format } from '@/lib/date'
 
 const PRESETS = [
   { work: 25, brk: 5, label: '25 / 5' },
@@ -19,7 +22,6 @@ export default function Focus() {
   const byId = useCourseMap()
   const tasks = useTasks()
   const logged = useFocusToday()
-  const sessions = useSessionsOn(today())
   const notify = useUi((s) => s.notify)
 
   const [preset, setPreset] = useState(PRESETS[0])
@@ -30,6 +32,7 @@ export default function Focus() {
   const [taskId, setTaskId] = useState('')
   const [interruptions, setInterruptions] = useState(0)
   const startedRef = useRef<string | null>(null)
+  const finishingRef = useRef(false)
   // The deadline, not a countdown. Android suspends a backgrounded WebView's
   // timers, so a decrementing counter loses every minute you spend with the
   // screen off — which is most of a pomodoro. Wall-clock arithmetic against a
@@ -51,21 +54,18 @@ export default function Focus() {
         courseId: string
         taskId: string
         interruptions: number
+        started?: string | null
       }
       const remaining = Math.ceil((run.endsAt - Date.now()) / 1000)
-      if (remaining <= 0) {
-        localStorage.removeItem(RUN_KEY)
-        return
-      }
       setPreset(PRESETS.find((p) => p.work === run.work) ?? { work: run.work, brk: run.brk, label: `${run.work} / ${run.brk}` })
       setPhase(run.phase)
       setCourseId(run.courseId)
       setTaskId(run.taskId)
       setInterruptions(run.interruptions)
       setEndsAt(run.endsAt)
-      setLeft(remaining)
+      setLeft(Math.max(0, remaining))
       setRunning(true)
-      startedRef.current = new Date(run.endsAt - run.work * 60_000).toISOString()
+      startedRef.current = run.started ?? new Date(run.endsAt - (run.phase === 'work' ? run.work : run.brk) * 60_000).toISOString()
     } catch {
       /* a corrupt entry is not worth a crash */
     }
@@ -86,6 +86,15 @@ export default function Focus() {
     }
   }, [running, endsAt])
 
+  // Keep changes made during a running block (especially interruptions) in
+  // the recovery record as well as the visible timer.
+  useEffect(() => {
+    if (!running || endsAt === null) return
+    try {
+      localStorage.setItem(RUN_KEY, JSON.stringify({ endsAt, phase, work: preset.work, brk: preset.brk, courseId, taskId, interruptions, started: startedRef.current }))
+    } catch { /* persistence is optional */ }
+  }, [running, endsAt, phase, preset, courseId, taskId, interruptions])
+
   function beginCountdown(seconds: number, nextPhase: 'work' | 'break' = phase) {
     const end = Date.now() + seconds * 1000
     setEndsAt(end)
@@ -102,6 +111,7 @@ export default function Focus() {
           courseId,
           taskId,
           interruptions,
+          started: startedRef.current,
         }),
       )
     } catch {
@@ -125,6 +135,7 @@ export default function Focus() {
     stopCountdown(null)
     if (phase === 'work') void finish()
     else {
+      startedRef.current = null
       setPhase('work')
       setLeft(preset.work * 60)
       void thud()
@@ -134,6 +145,9 @@ export default function Focus() {
   }, [left, running])
 
   async function finish() {
+    if (finishingRef.current) return
+    finishingRef.current = true
+    try {
     const minutes = preset.work
     await put('focus_sessions', {
       id: uid(),
@@ -148,8 +162,9 @@ export default function Focus() {
       interruptions,
     })
     // credit the minutes to a planned block for the same course, if there is one
+    const sessions = alive(await db.sessions.where('date').equals(today()).toArray())
     const block = sessions.find(
-      (s) => s.status === 'planned' && (!courseId || s.course_id === courseId),
+      (s) => s.status === 'planned' && (taskId ? s.task_id === taskId : s.course_id === (courseId || null)),
     )
     if (block) {
       const actual = block.actual_min + minutes
@@ -164,6 +179,9 @@ export default function Focus() {
     void thud()
     beginCountdown(preset.brk * 60, 'break')
     notify(`${minutes} minutes logged${block ? ' and credited to your plan' : ''}`)
+    } finally {
+      finishingRef.current = false
+    }
   }
 
   const total = (phase === 'work' ? preset.work : preset.brk) * 60
@@ -198,6 +216,8 @@ export default function Focus() {
                   setPreset(p)
                   setPhase('work')
                   stopCountdown(p.work * 60)
+                  startedRef.current = null
+                  setInterruptions(0)
                 }}
               >
                 {p.label}
@@ -255,6 +275,7 @@ export default function Focus() {
               onClick={() => {
                 stopCountdown(total)
                 startedRef.current = null
+                setInterruptions(0)
               }}
             >
               <RotateCcw size={15} /> Reset
@@ -274,6 +295,7 @@ export default function Focus() {
           <div className="mt-6 grid w-full max-w-sm gap-2 sm:grid-cols-2">
             <Select
               label="Course"
+              disabled={running || (phase === 'work' && left !== total)}
               value={courseId}
               onChange={(e) => {
                 setCourseId(e.target.value)
@@ -287,7 +309,11 @@ export default function Focus() {
                 </option>
               ))}
             </Select>
-            <Select label="Deadline" value={taskId} onChange={(e) => setTaskId(e.target.value)}>
+            <Select label="Deadline" disabled={running || (phase === 'work' && left !== total)} value={taskId} onChange={(e) => {
+              setTaskId(e.target.value)
+              const task = tasks.find((t) => t.id === e.target.value)
+              if (task?.course_id) setCourseId(task.course_id)
+            }}>
               <option value="">None</option>
               {tasks
                 .filter((t) => t.status !== 'done' && (!courseId || t.course_id === courseId))
@@ -323,7 +349,7 @@ export default function Focus() {
                       className="flex items-center gap-2 border-b border-rule py-2 text-[13px] last:border-0"
                     >
                       <span className="font-mono text-[12px] text-ink-3 tabnum">
-                        {f.started.slice(11, 16)}
+                        {format(new Date(f.started), 'HH:mm')}
                       </span>
                       <span className="min-w-0 flex-1 truncate">
                         {f.course_id ? byId.get(f.course_id)?.code : 'General'}

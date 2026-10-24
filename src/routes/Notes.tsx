@@ -35,7 +35,9 @@ export default function Notes() {
       setDraft(selected.body_md)
       setTitle(selected.title)
     }
-  }, [selectedId, selected?.updated_at]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Loading/switching notes populates the editor. A background save must not
+  // replace text typed after that save began (for example on title blur).
+  }, [selectedId, selected?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedId && notes.length) setSelectedId(notes[0].id)
@@ -207,6 +209,7 @@ export default function Notes() {
                 <Button
                   size="sm"
                   variant="danger"
+                  aria-label={`Delete note: ${selected.title}`}
                   onClick={async () => {
                     await removeWithUndo('notes', selected.id, selected.title)
                     setSelectedId(null)
@@ -315,7 +318,7 @@ export default function Notes() {
         title={selected ? `History of “${selected.title}”` : 'History'}
         wide
       >
-        {selected ? <NoteHistory note={selected} onClose={() => setHistory(false)} /> : null}
+        {selected ? <NoteHistory note={selected} onClose={(body) => { if (body !== undefined) setDraft(body); setHistory(false) }} /> : null}
       </Modal>
     </>
   )
@@ -326,7 +329,7 @@ export default function Notes() {
  * few minutes after the last one, so this is a list of editing sessions
  * rather than of keystrokes.
  */
-function NoteHistory({ note, onClose }: { note: NoteRow; onClose: () => void }) {
+function NoteHistory({ note, onClose }: { note: NoteRow; onClose: (body?: string) => void }) {
   const notify = useUi((s) => s.notify)
   const versions = useLiveQuery(async () => listVersions(note.id), [note.id, note.updated_at]) ?? []
   const [open, setOpen] = useState<string | null>(null)
@@ -360,7 +363,7 @@ function NoteHistory({ note, onClose }: { note: NoteRow; onClose: () => void }) 
               onClick={async () => {
                 await restoreVersion(v)
                 notify('Note restored — the version you replaced was kept too')
-                onClose()
+                onClose(v.body_md)
               }}
             >
               Restore

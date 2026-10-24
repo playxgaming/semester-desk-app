@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import {
   Badge,
@@ -41,6 +41,10 @@ function SlotForm({ slot, onDone }: { slot?: TimetableSlot; onDone: () => void }
     },
   )
 
+  useEffect(() => {
+    if (!form.course_id && courses.length) setForm((current) => ({ ...current, course_id: courses[0].id }))
+  }, [courses, form.course_id])
+
   if (!courses.length) {
     return <p className="text-[13.5px] text-ink-2">Add a course first — a slot has to belong to one.</p>
   }
@@ -49,6 +53,10 @@ function SlotForm({ slot, onDone }: { slot?: TimetableSlot; onDone: () => void }
     <form
       onSubmit={async (e) => {
         e.preventDefault()
+        if (!form.course_id || !courses.some((c) => c.id === form.course_id)) {
+          notify('Choose a course for this class', 'crit')
+          return
+        }
         if (minutesOfDay(form.end) <= minutesOfDay(form.start)) {
           notify('End time has to be after the start', 'crit')
           return
@@ -99,12 +107,14 @@ function SlotForm({ slot, onDone }: { slot?: TimetableSlot; onDone: () => void }
         <Field
           label="Start"
           type="time"
+          required
           value={form.start}
           onChange={(e) => setForm({ ...form, start: e.target.value })}
         />
         <Field
           label="End"
           type="time"
+          required
           value={form.end}
           onChange={(e) => setForm({ ...form, end: e.target.value })}
         />
@@ -235,7 +245,7 @@ export default function Timetable() {
           className="flex flex-wrap gap-2"
           onSubmit={async (e) => {
             e.preventDefault()
-            if (!holiday) return
+            if (!holiday || exceptions.some((e) => e.date === holiday && !e.slot_id && e.kind === 'holiday')) return
             await put('timetable_exceptions', {
               id: uid(),
               user_id: null,
@@ -253,6 +263,7 @@ export default function Timetable() {
         >
           <Field
             type="date"
+            required
             className="w-[190px]"
             value={holiday}
             aria-label="Holiday date"

@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { Download, Upload } from 'lucide-react'
 import {
-  Badge,
   Button,
   Card,
   Field,
@@ -14,7 +13,8 @@ import {
 } from '@/components/ui'
 import { useProfile } from '@/hooks/data'
 import { saveProfile } from '@/db/mutate'
-import { DEFAULT_GRADE_BANDS, type GradeBand, type Profile } from '@/db/db'
+import { DEFAULT_GRADE_BANDS, GPA4_GRADE_BANDS, type GradeBand, type Profile } from '@/db/db'
+import { AiConnection } from '@/components/AiConnection'
 import { download, exportCsvBundle, exportJson, importJson } from '@/lib/backup'
 import { wipeEverything } from '@/db/seed'
 import { humanMinutes } from '@/lib/date'
@@ -37,17 +37,38 @@ import { useExceptions } from '@/hooks/data'
 import { put } from '@/db/mutate'
 import { uid } from '@/lib/id'
 
-const GPA4_BANDS: GradeBand[] = [
-  { min_pct: 90, letter: 'A', points: 4 },
-  { min_pct: 85, letter: 'A-', points: 3.7 },
-  { min_pct: 80, letter: 'B+', points: 3.3 },
-  { min_pct: 75, letter: 'B', points: 3 },
-  { min_pct: 70, letter: 'B-', points: 2.7 },
-  { min_pct: 65, letter: 'C+', points: 2.3 },
-  { min_pct: 60, letter: 'C', points: 2 },
-  { min_pct: 50, letter: 'D', points: 1 },
-  { min_pct: 0, letter: 'F', points: 0 },
-]
+// Keep keyboard input optimistic while IndexedDB's live query catches up.
+// Replacing the controlled value with each async read can drop typed letters.
+function ProfileTextField({ field, value, ...props }: Omit<ComponentProps<typeof Field>, 'value' | 'onChange'> & { field: 'name' | 'institution' | 'current_semester'; value: string }) {
+  const [draft, setDraft] = useState(value)
+  const focused = useRef(false)
+  const notify = useUi((s) => s.notify)
+  useEffect(() => { if (!focused.current) setDraft(value) }, [value])
+  return <Field {...props} value={draft} onFocus={() => { focused.current = true }} onBlur={() => { focused.current = false; setDraft(value) }} onChange={(e) => {
+    const next = e.target.value
+    setDraft(next)
+    void saveProfile({ [field]: next }).catch(() => notify('Could not save your profile. Please try again.', 'crit'))
+  }} />
+}
+
+function GradeInput({ value, onValue, ...props }: Omit<ComponentProps<'input'>, 'value' | 'onChange'> & { value: string | number; onValue: (value: string) => void }) {
+  const [draft, setDraft] = useState(String(value))
+  const focused = useRef(false)
+  const notify = useUi((s) => s.notify)
+  useEffect(() => { if (!focused.current) setDraft(String(value)) }, [value])
+  return <input {...props} value={draft} onFocus={() => { focused.current = true }} onBlur={(e) => {
+    focused.current = false
+    if (props.type === 'number' && draft === '') setDraft(String(value))
+    else if (props.type === 'number' && !e.currentTarget.validity.valid) {
+      setDraft(String(value))
+      notify(`Use a number from ${props.min} to ${props.max}.`, 'warn')
+    }
+  }} onChange={(e) => {
+    const next = e.target.value
+    setDraft(next)
+    if (props.type !== 'number' || (next !== '' && e.currentTarget.validity.valid)) onValue(next)
+  }} />
+}
 
 export default function Settings() {
   const profile = useProfile()
@@ -79,7 +100,7 @@ export default function Settings() {
     permission === 'granted'
       ? native
         ? `${scheduled} scheduled`
-        : 'browser: only while open'
+        : 'browser: test notifications'
       : permission === 'denied'
         ? 'blocked'
         : 'off'
@@ -92,7 +113,7 @@ export default function Settings() {
   function applyScheme(scheme: Profile['grading_scheme']) {
     void saveProfile({
       grading_scheme: scheme,
-      grade_bands: scheme === 'gpa4' ? GPA4_BANDS : DEFAULT_GRADE_BANDS,
+      grade_bands: scheme === 'gpa4' ? GPA4_GRADE_BANDS : DEFAULT_GRADE_BANDS,
     })
   }
 
@@ -107,37 +128,39 @@ export default function Settings() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="You">
           <Row>
-            <Field
+            <ProfileTextField
+              field="name"
               label="Name"
               value={profile.name}
-              onChange={(e) => void saveProfile({ name: e.target.value })}
             />
-            <Field
+            <ProfileTextField
+              field="institution"
               label="Institution"
               value={profile.institution}
-              onChange={(e) => void saveProfile({ institution: e.target.value })}
             />
           </Row>
           <Row className="mt-3">
             <Field
               label="Term starts"
               type="date"
+              max={profile.term_end}
               value={profile.term_start}
               onChange={(e) => void saveProfile({ term_start: e.target.value })}
             />
             <Field
               label="Term ends"
               type="date"
+              min={profile.term_start}
               value={profile.term_end}
               onChange={(e) => void saveProfile({ term_end: e.target.value })}
             />
           </Row>
-          <Field
+          <ProfileTextField
+            field="current_semester"
             className="mt-3"
             label="Current semester"
             value={profile.current_semester}
             hint="New courses land here. CGPA is the credit-weighted mean across every semester."
-            onChange={(e) => void saveProfile({ current_semester: e.target.value })}
           />
           <Row className="mt-3">
             <Select
@@ -213,36 +236,44 @@ export default function Settings() {
             </thead>
             <tbody>
               {profile.grade_bands.map((b, i) => (
-                <tr key={`${b.letter}-${i}`} className="border-b border-rule last:border-0">
+                <tr key={i} className="border-b border-rule last:border-0">
                   <td className="py-1 pr-2">
-                    <input
+                    <GradeInput
                       className="field w-[74px] py-1 font-mono text-[12.5px]"
                       type="number"
+                      aria-label={`Grade ${i + 1} minimum percentage`}
+                      min={0}
+                      max={100}
+                      step="0.1"
                       inputMode="decimal"
                       enterKeyHint="done"
                       value={b.min_pct}
-                      onChange={(e) => setBand(i, { min_pct: Number(e.target.value) })}
+                      onValue={(value) => setBand(i, { min_pct: Number(value) })}
                     />
                   </td>
                   <td className="py-1 pr-2">
-                    <input
+                    <GradeInput
                       className="field w-[70px] py-1 font-mono text-[12.5px]"
                       autoCapitalize="characters"
+                      aria-label={`Grade ${i + 1} letter`}
                       autoCorrect="off"
                       enterKeyHint="done"
                       value={b.letter}
-                      onChange={(e) => setBand(i, { letter: e.target.value })}
+                      onValue={(value) => setBand(i, { letter: value })}
                     />
                   </td>
                   <td className="py-1">
-                    <input
+                    <GradeInput
                       className="field w-[74px] py-1 font-mono text-[12.5px]"
                       type="number"
+                      aria-label={`Grade ${i + 1} points`}
+                      min={0}
+                      max={profile.grading_scheme === 'gpa4' ? 4 : 10}
                       inputMode="decimal"
                       enterKeyHint="done"
                       step="0.1"
                       value={b.points}
-                      onChange={(e) => setBand(i, { points: Number(e.target.value) })}
+                      onValue={(value) => setBand(i, { points: Number(value) })}
                     />
                   </td>
                 </tr>
@@ -257,7 +288,7 @@ export default function Settings() {
               <p className="mb-3 text-[13.5px] text-ink-2">
                 {native
                   ? `${scheduled} reminders are on this device's alarm clock. They fire with the app closed, offline, with no account behind them.`
-                  : 'A browser tab cannot schedule anything for when it is closed, so in the browser these only fire while the app is open. The Android build is where this feature actually lives.'}
+                  : 'This browser can send a test notification while the app is open. Scheduled class, deadline and morning reminders need the Android build.'}
               </p>
               <div className="space-y-2">
                 {(Object.keys(NOTIFY_LABELS) as NotifyKind[]).map((kind) => {
@@ -310,14 +341,14 @@ export default function Settings() {
                 <Button
                   variant="primary"
                   onClick={async () => {
-                    const n = await reschedule()
-                    notify(
-                      n.native
-                        ? `${n.scheduled} reminders scheduled`
-                        : 'Scheduling needs the Android build — nothing was set',
-                      n.native ? 'ok' : 'warn',
-                    )
-                    setScheduled(n.scheduled)
+                    try {
+                      const n = await reschedule()
+                      notify(
+                        n.native ? `${n.scheduled} reminders scheduled` : 'Scheduling needs the Android build — nothing was set',
+                        n.native ? 'ok' : 'warn',
+                      )
+                      setScheduled(n.scheduled)
+                    } catch { notify('Could not schedule reminders. Check notification permission and try again.', 'warn') }
                   }}
                 >
                   Reschedule now
@@ -342,25 +373,27 @@ export default function Settings() {
                 variant="primary"
                 disabled={permission === 'unsupported'}
                 onClick={async () => {
-                  const state = await requestPermission()
-                  setPermission(state)
-                  if (state === 'granted') {
-                    const n = await reschedule()
-                    setScheduled(n.scheduled)
-                  }
+                  try {
+                    const state = await requestPermission()
+                    setPermission(state)
+                    if (state === 'granted') {
+                      const n = await reschedule()
+                      setScheduled(n.scheduled)
+                    }
+                  } catch { notify('Notification permission could not be requested in this browser.', 'warn') }
                 }}
               >
-                {permission === 'denied' ? 'Blocked — enable in system settings' : 'Allow notifications'}
+                {permission === 'unsupported' ? 'Notifications unavailable in this browser' : permission === 'denied' ? 'Blocked — enable in system settings' : 'Allow notifications'}
               </Button>
             </>
           )}
         </Panel>
 
-        <Panel title="Public holidays" sub="the one optional network call">
+        <Panel title="Public holidays" sub="optional, no API key">
           <p className="mb-3 text-[13.5px] text-ink-2">
             Fills your timetable exceptions for the year so no class is counted on a day nobody
-            taught. It uses a free public API with no key and no account, and it is the only request
-            this app ever makes. Nothing else breaks if it fails.
+            taught. It uses a free public API with no key and no account. You can add exceptions
+            manually if your country is not supported.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <Select
@@ -379,11 +412,13 @@ export default function Settings() {
               className="w-[110px]"
               label="Year"
               type="number"
+              min={1900}
+              max={2100}
               value={year}
               onChange={(e) => setYear(Number(e.target.value))}
             />
             <Button
-              disabled={busy}
+              disabled={busy || !Number.isInteger(year) || year < 1900 || year > 2100}
               onClick={async () => {
                 setBusy(true)
                 try {
@@ -414,6 +449,8 @@ export default function Settings() {
                       ? `${added} holidays added for ${year}`
                       : `Already had every ${year} holiday`,
                   )
+                } catch (error) {
+                  notify(error instanceof Error ? error.message : 'Could not import holidays', 'crit')
                 } finally {
                   setBusy(false)
                 }
@@ -436,17 +473,22 @@ export default function Settings() {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={async () => {
-                const b = await exportJson()
-                download(`semester-desk-${b.exported_at.slice(0, 10)}.json`, JSON.stringify(b, null, 2))
-                notify('Backup downloaded')
+                try {
+                  const b = await exportJson()
+                  download(`semester-desk-${b.exported_at.slice(0, 10)}.json`, JSON.stringify(b, null, 2))
+                  notify('Backup downloaded')
+                } catch { notify('Could not export your backup. Please try again.', 'crit') }
               }}
             >
               <Download size={14} /> Export JSON
             </Button>
             <Button
               onClick={async () => {
-                const csv = await exportCsvBundle()
-                download(`semester-desk-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv')
+                try {
+                  const csv = await exportCsvBundle()
+                  download(`semester-desk-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv')
+                  notify('CSV downloaded')
+                } catch { notify('Could not export CSV. Please try again.', 'crit') }
               }}
             >
               <Download size={14} /> Export CSV
@@ -457,10 +499,11 @@ export default function Settings() {
             <input
               ref={fileRef}
               type="file"
-              accept="application/json"
+              accept="application/json,.json"
               className="hidden"
               onChange={async (e) => {
-                const file = e.target.files?.[0]
+                const input = e.currentTarget
+                const file = input.files?.[0]
                 if (!file) return
                 try {
                   const r = await importJson(await file.text())
@@ -468,10 +511,11 @@ export default function Settings() {
                 } catch (err) {
                   notify(err instanceof Error ? err.message : 'Import failed', 'crit')
                 }
-                e.target.value = ''
+                input.value = ''
               }}
             />
           </div>
+          <p className="mt-3 text-[12px] text-ink-3">Import merges records by ID and replaces matching records. JSON and CSV contain your records and attachment metadata; attached file contents stay on this device and need to be saved separately.</p>
 
           <div className="mt-4 border-t border-rule pt-3">
             <p className="mb-2 text-[13px] text-ink-2">
@@ -491,8 +535,9 @@ export default function Settings() {
             <Button
               variant="danger"
               size="sm"
-              onClick={() => {
-                if (window.confirm('Delete everything stored on this device?')) void wipeEverything()
+              onClick={async () => {
+                if (!window.confirm('Delete everything stored on this device, including attached files? Export a backup first.')) return
+                try { await wipeEverything() } catch { notify('Reset could not finish. Your data was not cleared.', 'crit') }
               }}
             >
               Reset and start empty
@@ -501,24 +546,11 @@ export default function Settings() {
         </Panel>
       </div>
 
+      <div className="mt-6"><AiConnection /></div>
+
       <Card className="mt-6 p-4 text-[13px] text-ink-2">
-        <b className="mb-1 block font-display text-[14px] text-ink">What is built, and what is next</b>
-        <p className="mb-2">
-          Phases 0–2 and 5 are here: foundations, the academic core, the study engine, and the career
-          and money modules. Phase 3 is the Claude proxy — an Edge Function that holds the API key
-          server-side; the function and its SQL are in <code className="chip">supabase/</code>, waiting
-          on a key. Phase 4 is notifications; phase 6 is hardening.
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {['0 Foundations', '1 Academic core', '2 Study engine', '5 Career & money'].map((p) => (
-            <Badge key={p} tone="ok">
-              {p} ✓
-            </Badge>
-          ))}
-          {['3 AI layer', '4 Notifications', '6 Hardening'].map((p) => (
-            <Badge key={p}>{p}</Badge>
-          ))}
-        </div>
+        <b className="mb-1 block font-display text-[14px] text-ink">Connected features</b>
+        <p>Your courses, attendance, grades, planner, cards, resume and money work on this device without API keys. AI Tutor and Scanner use your configured AI server. Public holiday import uses a free service; notifications use your device permission. Cloud sync is optional and requires a configured Supabase project.</p>
       </Card>
     </>
   )

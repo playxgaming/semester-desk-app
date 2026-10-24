@@ -306,6 +306,8 @@ export interface AiThread extends Base {
 
 export interface AiMessage extends Base {
   thread_id: string
+  /** Stable order within a conversation, independent of clock precision. */
+  sequence?: number
   role: 'user' | 'assistant' | 'system'
   content: string
   tokens_in: number
@@ -471,5 +473,17 @@ export const DEFAULT_GRADE_BANDS: GradeBand[] = [
   { min_pct: 50, letter: 'C', points: 6 },
   { min_pct: 45, letter: 'D', points: 5 },
   { min_pct: 40, letter: 'E', points: 4 },
+  { min_pct: 0, letter: 'F', points: 0 },
+]
+
+export const GPA4_GRADE_BANDS: GradeBand[] = [
+  { min_pct: 90, letter: 'A', points: 4 },
+  { min_pct: 85, letter: 'A-', points: 3.7 },
+  { min_pct: 80, letter: 'B+', points: 3.3 },
+  { min_pct: 75, letter: 'B', points: 3 },
+  { min_pct: 70, letter: 'B-', points: 2.7 },
+  { min_pct: 65, letter: 'C+', points: 2.3 },
+  { min_pct: 60, letter: 'C', points: 2 },
+  { min_pct: 50, letter: 'D', points: 1 },
   { min_pct: 0, letter: 'F', points: 0 },
 ]

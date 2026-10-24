@@ -104,7 +104,7 @@ export default function CourseDetail() {
 
   const grade = gradeCourse(assessments, profile.grade_bands)
   const need = whatDoINeed(grade, course.target_grade)
-  const att = attendanceStats(attendance, course.attendance_threshold || profile.attendance_threshold)
+  const att = attendanceStats(attendance, course.attendance_threshold ?? profile.attendance_threshold)
   const coverage = topics.length
     ? topics.reduce((s, t) => s + t.confidence, 0) / (topics.length * 3)
     : 0
@@ -261,7 +261,7 @@ export default function CourseDetail() {
                 <Link to="/notes" className="tap-link ml-auto text-[12.5px]">write</Link>
               </li>
               <li className="flex items-center gap-2">
-                <Badge tone={att.meets ? 'ok' : 'crit'}>{att.canSkip}</Badge> classes you can still miss
+                <Badge tone={att.meets ? 'ok' : 'crit'}>{Number.isFinite(att.canSkip) ? att.canSkip : '∞'}</Badge> classes you can still miss
                 <Link to="/attendance" className="tap-link ml-auto text-[12.5px]">log</Link>
               </li>
             </ul>

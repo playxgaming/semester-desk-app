@@ -83,7 +83,7 @@ export function weeklyReview(input: ReviewInput): WeeklyReview {
   const plannedMin = weekSessions.reduce((sum, s) => sum + s.planned_min, 0)
   const adherence = plannedMin > 0 ? studiedMin / plannedMin : null
 
-  const weekReviews = input.reviews.filter((r) => inWeek(r.at.slice(0, 10)) && !r.deleted_at)
+  const weekReviews = input.reviews.filter((r) => inWeek(dayKey(r.at)) && !r.deleted_at)
   const r = retention(weekReviews)
 
   const weekAttendance = input.attendance.filter((a) => inWeek(a.date) && !a.deleted_at)
@@ -91,10 +91,10 @@ export function weeklyReview(input: ReviewInput): WeeklyReview {
   const classesAttended = weekAttendance.filter((a) => a.status === 'present').length
 
   const tasksDone = input.tasks.filter(
-    (t) => t.status === 'done' && inWeek(t.updated_at.slice(0, 10)),
+    (t) => t.status === 'done' && inWeek(dayKey(t.updated_at)),
   ).length
   const openTasks = input.tasks.filter((t) => t.status !== 'done' && !t.deleted_at)
-  const tasksAdded = input.tasks.filter((t) => inWeek(t.updated_at.slice(0, 10))).length
+  const tasksAdded = input.tasks.filter((t) => inWeek(dayKey(t.updated_at))).length
 
   const findings: Finding[] = []
 
@@ -102,7 +102,7 @@ export function weeklyReview(input: ReviewInput): WeeklyReview {
   for (const c of input.courses) {
     const s = attendanceStats(
       input.attendance.filter((a) => a.course_id === c.id),
-      c.attendance_threshold || input.profile.attendance_threshold,
+      c.attendance_threshold ?? input.profile.attendance_threshold,
     )
     if (s.held === 0) continue
     if (!s.meets) {

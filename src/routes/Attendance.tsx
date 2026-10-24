@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Badge, Bar, Card, Dot, Empty, Note, PageHeader, Panel, Stat } from '@/components/ui'
-import { useAttendance, useCourses, useProfile, useSlots } from '@/hooks/data'
+import { useAttendance, useCourses, useExceptions, useProfile, useSlots } from '@/hooks/data'
 import { attendanceStats, projectAttendance } from '@/lib/attendance'
 import { addDays, dayKey, prettyDay } from '@/lib/date'
 import {
@@ -34,13 +34,14 @@ export default function Attendance() {
   const profile = useProfile()
   const rows = useAttendance()
   const slots = useSlots()
+  const exceptions = useExceptions()
   const [days, setDays] = useState(14)
 
   const recent = Array.from({ length: days }, (_, i) => dayKey(addDays(new Date(), -i)))
 
   async function cycleCell(courseId: string, date: string) {
     const current = cellStatus(rowsFor(rows, courseId, date))
-    await setAttendance(courseId, date, nextStatus(current), slots, rows)
+    await setAttendance(courseId, date, nextStatus(current), slots, rows, exceptions)
     void tap()
   }
 
@@ -67,7 +68,7 @@ export default function Attendance() {
         {courses.map((c) => {
           const s = attendanceStats(
             rows.filter((r) => r.course_id === c.id),
-            c.attendance_threshold || profile.attendance_threshold,
+            c.attendance_threshold ?? profile.attendance_threshold,
           )
           const projected = projectAttendance(s, 0, 3)
           return (
@@ -79,7 +80,7 @@ export default function Attendance() {
                   <span className="font-mono text-[14px]">{c.code}</span>
                 </span>
               }
-              sub={`${Math.round((c.attendance_threshold || profile.attendance_threshold) * 100)}% required`}
+              sub={`${Math.round((c.attendance_threshold ?? profile.attendance_threshold) * 100)}% required`}
               action={
                 <Badge tone={s.meets ? 'ok' : 'crit'}>
                   {s.pct === null ? 'no data' : `${(s.pct * 100).toFixed(1)}%`}
@@ -89,9 +90,9 @@ export default function Attendance() {
               <Bar value={s.pct ?? 0} tone={s.meets ? (s.canSkip > 1 ? 'ok' : 'warn') : 'crit'} />
               <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
                 <Stat value={s.present} label="Attended" hint={`of ${s.held} held`} />
-                <Stat value={s.canSkip} label="Can miss" tone={s.canSkip === 0 ? 'warn' : 'ok'} />
+                <Stat value={Number.isFinite(s.canSkip) ? s.canSkip : '∞'} label="Can miss" tone={s.canSkip === 0 ? 'warn' : 'ok'} />
                 <Stat
-                  value={s.meets ? '—' : s.mustAttend}
+                  value={s.meets ? '—' : Number.isFinite(s.mustAttend) ? s.mustAttend : '∞'}
                   label="Must attend"
                   tone={s.meets ? undefined : 'crit'}
                 />
@@ -138,9 +139,9 @@ export default function Attendance() {
             a horizontal-scrolling puzzle, not a control. */}
         <ul className="space-y-2 md:hidden">
           {recent.map((d) => {
-            const scheduled = courses.filter((c) => slotsFor(slots, c.id, d).length > 0)
+            const scheduled = courses.filter((c) => slotsFor(slots, c.id, d, exceptions).length > 0)
             const logged = courses.filter((c) => rowsFor(rows, c.id, d).length > 0)
-            const shown = scheduled.length ? scheduled : logged
+            const shown = courses.filter((c) => scheduled.some((x) => x.id === c.id) || logged.some((x) => x.id === c.id))
             if (!shown.length) return null
             return (
               <li key={d} className="rounded border border-rule p-3">
@@ -194,7 +195,7 @@ export default function Attendance() {
                   <td className="py-1.5 pr-3 text-[12.5px] text-ink-2">{prettyDay(d)}</td>
                   {courses.map((c) => {
                     const status = cellStatus(rowsFor(rows, c.id, d))
-                    const scheduled = slotsFor(slots, c.id, d).length > 0
+                    const scheduled = slotsFor(slots, c.id, d, exceptions).length > 0
                     return (
                       <td key={c.id} className="py-1.5 text-center">
                         <button

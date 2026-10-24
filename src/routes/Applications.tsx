@@ -22,7 +22,7 @@ import {
   useResumeVersions,
 } from '@/hooks/data'
 import { effortMinutes, funnel, health, isOpen, KINDS, STAGES } from '@/lib/pipeline'
-import { humanMinutes, prettyDateTime, relativeDue } from '@/lib/date'
+import { dayKey, humanMinutes, prettyDateTime, relativeDue } from '@/lib/date'
 import { dueTone } from '@/lib/priority'
 import { patch, put, remove } from '@/db/mutate'
 import { removeWithUndo } from '@/lib/undoable'
@@ -66,7 +66,12 @@ function ApplicationForm({ app, onDone }: { app?: Application; onDone: () => voi
       onSubmit={async (e) => {
         e.preventDefault()
         if (!form.org.trim()) return
-        await put('applications', form)
+        await put('applications', { ...form, org: form.org.trim(), role: form.role.trim() })
+        if (app && app.stage !== form.stage) await put('application_events', {
+          id: uid(), user_id: null, updated_at: '', deleted_at: null,
+          application_id: form.id, at: new Date().toISOString(), kind: 'stage',
+          note: `Moved to ${STAGES.find((stage) => stage.key === form.stage)?.label ?? form.stage}`,
+        })
         notify(`${form.org} saved`)
         onDone()
       }}
@@ -235,10 +240,11 @@ function Timeline({ app }: { app: Application }) {
           enterKeyHint="done"
           autoCapitalize="sentences"
           placeholder="What happened?"
+          aria-label="Timeline event note"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
-        <Button type="submit" size="sm">
+        <Button type="submit" size="sm" aria-label="Add timeline event">
           <Plus size={13} />
         </Button>
       </form>
@@ -315,9 +321,9 @@ function ContactForm({ contact, onDone }: { contact?: Contact; onDone: () => voi
         <Field
           label="Follow up on"
           type="date"
-          value={form.follow_up_at?.slice(0, 10) ?? ''}
+          value={form.follow_up_at ? dayKey(form.follow_up_at) : ''}
           onChange={(e) =>
-            setForm({ ...form, follow_up_at: e.target.value ? new Date(e.target.value).toISOString() : null })
+            setForm({ ...form, follow_up_at: e.target.value ? new Date(`${e.target.value}T00:00:00`).toISOString() : null })
           }
         />
       </Row>
@@ -338,6 +344,7 @@ function ContactForm({ contact, onDone }: { contact?: Contact; onDone: () => voi
           <Button
             variant="danger"
             className="ml-auto"
+            aria-label="Delete contact"
             onClick={async () => {
               await remove('contacts', contact.id)
               onDone()
@@ -511,6 +518,7 @@ export default function Applications() {
                                 size="sm"
                                 className="flex-1 !px-1"
                                 aria-label="Move back a stage"
+                                disabled={a.stage === STAGES[0].key}
                                 onClick={() => void move(a, -1)}
                               >
                                 <ChevronLeft size={12} />

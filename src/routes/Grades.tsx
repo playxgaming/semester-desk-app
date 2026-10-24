@@ -46,6 +46,7 @@ function AssessmentForm({
   onDone: () => void
 }) {
   const notify = useUi((s) => s.notify)
+  const assessments = useAssessments(courseId)
   const [form, setForm] = useState<Assessment>(
     assessment ?? {
       id: uid(),
@@ -65,6 +66,15 @@ function AssessmentForm({
       onSubmit={async (e) => {
         e.preventDefault()
         if (!form.title.trim()) return
+        const totalWeight = assessments.filter((a) => a.id !== form.id).reduce((sum, a) => sum + a.weight_pct, 0) + form.weight_pct
+        if (totalWeight > 100 + 1e-9) {
+          notify(`Assessment weights would total ${totalWeight}%. Keep this course at or below 100%.`, 'crit')
+          return
+        }
+        if (form.max <= 0 || (form.score !== null && (form.score < 0 || form.score > form.max))) {
+          notify('Score must be between zero and the maximum mark', 'crit')
+          return
+        }
         await put('assessments', form)
         notify('Assessment saved')
         onDone()
@@ -97,6 +107,8 @@ function AssessmentForm({
         <Field
           label="Score"
           type="number"
+          min={0}
+          max={form.max}
           step="0.5"
           placeholder="leave empty until graded"
           value={form.score ?? ''}
@@ -180,7 +192,7 @@ export default function Grades() {
     'at risk': 'var(--crit)',
   }
 
-  if (!courses.length) {
+  if (!allCourses.length) {
     return (
       <>
         <PageHeader eyebrow="Academic core" title="Grades" />

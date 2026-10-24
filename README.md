@@ -6,7 +6,7 @@
 
 An offline-first PWA for the whole semester — courses, timetable, attendance, deadlines, grades, a syllabus tracker, spaced repetition and a study planner that refuses to write a day you cannot execute.
 
-**The academic core works without a backend.** Courses, attendance, planning, notes, revision, and deterministic coaching run on your device. The optional AI Tutor and Smart Scanner use the Node server in `server/` and require your own server-side Gemini API key and internet access. See [HACKATHON.md](HACKATHON.md) for setup, deployment, verification, and a three-minute presentation script.
+**The academic core works without a backend.** Courses, attendance, planning, notes, revision, and deterministic coaching run on your device. The optional AI Tutor and Smart Scanner use the Node server in `server/` and require your own server-side Gemini API key and internet access. See [AI_SETUP.md](AI_SETUP.md) to set up the AI server.
 
 All seven phases of the v2 plan are built, two of them rebuilt to need no server: the AI layer became a deterministic coach, and push notifications became on-device alarms. There is an Android app, and it is a real APK rather than a bookmark.
 
@@ -21,7 +21,7 @@ npm run dev
 
 For the **Android app**, see [ANDROID.md](ANDROID.md) — push to GitHub and a workflow builds the APK for you, so you never install Android Studio.
 
-Open the URL Vite prints. This starts the offline core without an account or API key. Data is stored in IndexedDB on your device. To enable Tutor and Scanner, configure and start the optional server using [HACKATHON.md](HACKATHON.md).
+Open the URL Vite prints. This starts the offline core without an account or API key. Data is stored in IndexedDB on your device. To enable Tutor and Scanner, configure and start the optional server using [AI_SETUP.md](AI_SETUP.md).
 
 A worked demo semester is written on first launch so no screen is ever empty: five courses, a timetable, four weeks of attendance, graded assessments, topics, deadlines, a deck of cards, seven applications across the pipeline, a resume record, and two months of expenses with budgets and habits. **Settings → Reset and start empty** clears it when you want to enter your own.
 
@@ -195,7 +195,7 @@ The anon key is safe in the browser; RLS is what protects your rows. The Anthrop
 npm run build      # → dist/
 ```
 
-`dist/` is a static site. Routing is hash-based, so no server rewrite rules are needed. For Tutor and Scanner, deploy `server/` separately and set `VITE_AI_API_URL` before building the frontend; details are in [HACKATHON.md](HACKATHON.md). Browser reminders run while the tab is open; Android uses native scheduled notifications.
+`dist/` is a static site. Routing is hash-based, so no server rewrite rules are needed. For Tutor and Scanner, deploy `server/` separately and set `VITE_AI_API_URL` before building the frontend; details are in [AI_SETUP.md](AI_SETUP.md). Browser reminders run while the tab is open; Android uses native scheduled notifications.
 
 ---
 

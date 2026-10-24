@@ -83,7 +83,7 @@ jobs:
           cat > out/release-notes.md <<'NOTES'
           Download **semester-desk.apk** below and open it on an Android phone.
 
-          This is a debug-signed hackathon demo for sideloading, not a Play Store release. Android will ask you to allow installation from your browser or file manager. Core planning and storage work offline. AI Tutor and Scanner require a separately configured HTTPS backend.
+          This is a debug-signed demo build for sideloading, not a Play Store release. Android will ask you to allow installation from your browser or file manager. Core planning and storage work offline. AI Tutor and Scanner require a separately configured HTTPS backend.
 
           Export a backup in Settings before replacing an older installation. Debug signing keys can change between builds; Android may require uninstalling the old build, which removes its local data.
           NOTES

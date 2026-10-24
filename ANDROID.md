@@ -8,7 +8,7 @@ After a successful **Android APK** workflow, the newest debug APK is available f
 2. Allow installation from the browser or file manager when Android prompts.
 3. Open Semester Desk. Core planning, attendance, notes, and data storage work offline.
 
-This APK is a **debug-signed hackathon demo** for sideloading. It is not a signed Play Store release. AI Tutor and Scanner require internet access and a separately configured AI backend; the API key is kept on that server. Public-holiday import also uses the internet.
+This APK is a **debug-signed demo build** for sideloading. It is not a signed Play Store release. AI Tutor and Scanner require internet access and a separately configured AI backend; the API key is kept on that server. Public-holiday import also uses the internet.
 
 Before replacing an existing installation, export a JSON backup in Settings. GitHub runners can generate different debug signing keys. If Android refuses an update, export your data, uninstall the older app, install the new APK, and restore the backup. Uninstalling or clearing app storage deletes local data.
 

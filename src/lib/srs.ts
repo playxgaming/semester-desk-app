@@ -1,4 +1,5 @@
 import type { Card, Review } from '@/db/db'
+import { dayKey } from './date'
 
 /**
  * SM-2 with lapse tracking. Four buttons rather than six, because nobody
@@ -97,7 +98,7 @@ export function retention(reviews: Review[]): RetentionStats {
   const correct = reviews.filter((r) => r.grade > 0).length
   const map = new Map<string, { count: number; correct: number }>()
   for (const r of reviews) {
-    const d = r.at.slice(0, 10)
+    const d = dayKey(r.at)
     const e = map.get(d) ?? { count: 0, correct: 0 }
     e.count += 1
     if (r.grade > 0) e.correct += 1

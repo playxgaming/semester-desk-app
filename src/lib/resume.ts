@@ -27,7 +27,7 @@ export function buildResume(
   version: ResumeVersion,
   allItems: ResumeItem[],
 ): ResumeDoc {
-  const chosen = version.item_ids
+  const chosen = [...new Set(version.item_ids)]
     .map((id) => allItems.find((i) => i.id === id))
     .filter((i): i is ResumeItem => Boolean(i) && !i!.deleted_at)
 
@@ -45,6 +45,7 @@ export function dateRange(item: ResumeItem): string {
   const start = fmt(item.start)
   const end = item.end ? fmt(item.end) : item.start ? 'Present' : ''
   if (!start && !end) return ''
+  if (!start) return end
   return end ? `${start} – ${end}` : start
 }
 

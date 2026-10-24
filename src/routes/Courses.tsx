@@ -58,7 +58,7 @@ export function CourseForm({
       onSubmit={async (e) => {
         e.preventDefault()
         if (!form.code.trim()) return
-        await put('courses', form)
+        await put('courses', { ...form, code: form.code.trim(), name: form.name.trim() })
         notify(`${form.code} saved`)
         onDone()
       }}
@@ -209,7 +209,7 @@ export default function Courses() {
             )
             const att = attendanceStats(
               attendance.filter((a) => a.course_id === c.id),
-              c.attendance_threshold || profile.attendance_threshold,
+              c.attendance_threshold ?? profile.attendance_threshold,
             )
             const ts = topics.filter((t) => t.course_id === c.id)
             const coverage = ts.length

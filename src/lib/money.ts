@@ -1,5 +1,6 @@
 import type { Budget, Habit, HabitLog, Recurring, Transaction } from '@/db/db'
 import { addDays, dayKey, differenceInCalendarDays, parseISO } from './date'
+import { addMonths, addYears } from 'date-fns'
 
 /**
  * Money maths. The number that matters mid-month is not "how much have I
@@ -152,9 +153,16 @@ export function creepers(totals: CategoryTotal[], minAmount = 300): CategoryTota
 }
 
 export function advanceRecurring(r: Recurring, now: Date = new Date()): string {
-  let next = parseISO(r.next_at)
-  const step = r.cadence === 'weekly' ? 7 : r.cadence === 'yearly' ? 365 : 30
-  while (next <= now) next = addDays(next, step)
+  const due = parseISO(r.next_at)
+  if (!Number.isFinite(due.getTime())) throw new Error('Set a valid next payment date first.')
+  // A payment consumes one occurrence even when paid early. Calculate from
+  // the original date so Jan 31 → Feb 28 → Mar 31 does not drift to the 28th.
+  const occurrence = (count: number) => r.cadence === 'weekly'
+    ? addDays(due, count * 7)
+    : r.cadence === 'yearly' ? addYears(due, count) : addMonths(due, count)
+  let count = 1
+  let next = occurrence(count)
+  while (next <= now) next = occurrence(++count)
   return next.toISOString()
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Flame, Plus, Trash2 } from 'lucide-react'
 import {
@@ -51,6 +51,7 @@ import { patch, put, remove } from '@/db/mutate'
 import { removeWithUndo } from '@/lib/undoable'
 import { uid } from '@/lib/id'
 import type { Budget, Habit, HabitLog, Recurring, Transaction } from '@/db/db'
+import { db } from '@/db/db'
 import { useUi } from '@/store/ui'
 
 const METHODS: Transaction['method'][] = ['upi', 'cash', 'card', 'other']
@@ -66,6 +67,7 @@ function QuickAdd({ month }: { month: string }) {
   const [category, setCategory] = useState(SPEND_CATEGORIES[0])
   const [method, setMethod] = useState<Transaction['method']>('upi')
   const [note, setNote] = useState('')
+  const saving = useRef(false)
 
   return (
     <form
@@ -73,8 +75,10 @@ function QuickAdd({ month }: { month: string }) {
       onSubmit={async (e) => {
         e.preventDefault()
         const value = Number(amount)
-        if (!value || value <= 0) return
-        await put('transactions', {
+        if (!Number.isFinite(value) || value <= 0 || saving.current) return
+        saving.current = true
+        try {
+          await put('transactions', {
           id: uid(),
           user_id: null,
           updated_at: '',
@@ -87,14 +91,17 @@ function QuickAdd({ month }: { month: string }) {
         } as Transaction)
         setAmount('')
         setNote('')
-        notify(`${rupees(value)} logged to ${category}`)
+          notify(`${rupees(value)} logged to ${category}`)
+        } catch { notify('Could not save this expense. Please try again.', 'crit') }
+        finally { saving.current = false }
       }}
     >
       <Field
         className="w-[130px]"
         label="Amount (₹)"
         type="number"
-        min={1}
+        min={0.01}
+        required
         step="0.01"
         inputMode="decimal"
         placeholder="120"
@@ -137,27 +144,35 @@ function QuickAdd({ month }: { month: string }) {
   )
 }
 
-function BudgetForm({ month, onDone }: { month: string; onDone: () => void }) {
-  const [category, setCategory] = useState(SPEND_CATEGORIES[0])
-  const [limit, setLimit] = useState(3000)
+function BudgetForm({ month, budget, onDone }: { month: string; budget?: Budget; onDone: () => void }) {
+  const [category, setCategory] = useState(budget?.category ?? SPEND_CATEGORIES[0])
+  const [limit, setLimit] = useState(budget?.limit_amount ?? 3000)
   return (
     <form
       onSubmit={async (e) => {
         e.preventDefault()
-        await put('budgets', {
-          id: uid(),
-          user_id: null,
-          updated_at: '',
-          deleted_at: null,
-          month,
-          category,
-          limit_amount: limit,
-        } as Budget)
+        if (!Number.isFinite(limit) || limit < 0) return
+        await db.transaction('rw', db.budgets, db.outbox, async () => {
+          const existing = (await db.budgets.where('month').equals(month).toArray())
+            .filter((row) => !row.deleted_at && row.category === category)
+          await put('budgets', {
+            id: budget?.id ?? existing[0]?.id ?? uid(),
+            user_id: null,
+            updated_at: '',
+            deleted_at: null,
+            month,
+            category,
+            limit_amount: limit,
+          } as Budget)
+          // One limit per category and month, including backups made before
+          // this rule was enforced.
+          for (const row of existing) if (row.id !== (budget?.id ?? existing[0]?.id)) await remove('budgets', row.id)
+        })
         onDone()
       }}
     >
       <Row>
-        <Select label="Category" value={category} onChange={(e) => setCategory(e.target.value)}>
+        <Select label="Category" value={category} disabled={Boolean(budget)} onChange={(e) => setCategory(e.target.value)}>
           {SPEND_CATEGORIES.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -168,7 +183,8 @@ function BudgetForm({ month, onDone }: { month: string; onDone: () => void }) {
           label={`Monthly limit for ${monthLabel(month)} (₹)`}
           type="number"
           min={0}
-          step={100}
+          step="0.01"
+          required
           value={limit}
           onChange={(e) => setLimit(Number(e.target.value))}
         />
@@ -183,8 +199,8 @@ function BudgetForm({ month, onDone }: { month: string; onDone: () => void }) {
   )
 }
 
-function RecurringForm({ onDone }: { onDone: () => void }) {
-  const [form, setForm] = useState<Recurring>({
+function RecurringForm({ recurring, onDone }: { recurring?: Recurring; onDone: () => void }) {
+  const [form, setForm] = useState<Recurring>(recurring ?? {
     id: uid(),
     user_id: null,
     updated_at: '',
@@ -198,8 +214,8 @@ function RecurringForm({ onDone }: { onDone: () => void }) {
     <form
       onSubmit={async (e) => {
         e.preventDefault()
-        if (!form.name.trim()) return
-        await put('recurring', form)
+        if (!form.name.trim() || !Number.isFinite(form.amount) || form.amount <= 0 || !form.next_at) return
+        await put('recurring', { ...form, name: form.name.trim() })
         onDone()
       }}
     >
@@ -214,7 +230,9 @@ function RecurringForm({ onDone }: { onDone: () => void }) {
         <Field
           label="Amount (₹)"
           type="number"
-          min={0}
+          min={0.01}
+          step="0.01"
+          required
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })}
         />
@@ -232,9 +250,10 @@ function RecurringForm({ onDone }: { onDone: () => void }) {
         <Field
           label="Next due"
           type="date"
-          value={form.next_at.slice(0, 10)}
+          required
+          value={form.next_at ? dayKey(form.next_at) : ''}
           onChange={(e) =>
-            setForm({ ...form, next_at: new Date(`${e.target.value}T09:00:00`).toISOString() })
+            setForm({ ...form, next_at: e.target.value ? new Date(`${e.target.value}T09:00:00`).toISOString() : '' })
           }
         />
       </Row>
@@ -251,12 +270,26 @@ function RecurringForm({ onDone }: { onDone: () => void }) {
 export default function Money() {
   const transactions = useTransactions()
   const month = monthKey()
-  const budgets = useBudgets(month)
+  const savedBudgets = useBudgets(month)
+  const budgets = useMemo(() => {
+    const byCategory = new Map<string, Budget>()
+    for (const budget of savedBudgets) {
+      const existing = byCategory.get(budget.category)
+      if (!existing || budget.updated_at > existing.updated_at) byCategory.set(budget.category, budget)
+    }
+    return [...byCategory.values()]
+  }, [savedBudgets])
   const recurring = useRecurring()
   const habits = useHabits()
   const habitLogs = useHabitLogs()
   const [addingBudget, setAddingBudget] = useState(false)
   const [addingRecurring, setAddingRecurring] = useState(false)
+  const [editingBudget, setEditingBudget] = useState<Budget>()
+  const [editingRecurring, setEditingRecurring] = useState<Recurring>()
+  const [paying, setPaying] = useState<string | null>(null)
+  const payingRef = useRef(new Set<string>())
+  const addingHabitRef = useRef(false)
+  const notify = useUi((s) => s.notify)
   const [newHabit, setNewHabit] = useState('')
 
   const prev = previousMonth(month)
@@ -381,6 +414,10 @@ export default function Money() {
                     >
                       {b.status.replace('-', ' ')}
                     </Badge>
+                    <Button size="sm" aria-label={`Edit ${b.category} budget`} onClick={() => setEditingBudget(budgets.find((row) => row.category === b.category))}>Edit</Button>
+                    <button type="button" aria-label={`Delete ${b.category} budget`} className="icon-btn icon-btn-danger" onClick={async () => {
+                      for (const row of savedBudgets.filter((row) => row.category === b.category)) await removeWithUndo('budgets', row.id, `${b.category} budget`)
+                    }}><Trash2 size={12} /></button>
                   </div>
                   {/* two bars, same scale: spend against the month elapsed */}
                   <Bar
@@ -480,24 +517,35 @@ export default function Money() {
                     key={r.id}
                     className="flex flex-wrap items-center gap-2 border-b border-rule py-2.5 text-[13.5px] last:border-0"
                   >
-                    <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                    <button type="button" className="tap-text min-w-0 flex-1 truncate text-left" aria-label={`Edit ${r.name}`} onClick={() => setEditingRecurring(r)}>{r.name}</button>
                     <span className="font-mono text-[13px] tabnum">{rupees(r.amount)}</span>
                     <Badge tone={rel.days <= 2 ? 'warn' : 'neutral'}>{rel.label}</Badge>
                     <Button
                       size="sm"
+                      disabled={paying === r.id}
                       onClick={async () => {
-                        await put('transactions', {
-                          id: uid(),
-                          user_id: null,
-                          updated_at: '',
-                          deleted_at: null,
-                          at: new Date().toISOString(),
-                          amount: r.amount,
-                          category: 'Other',
-                          method: 'upi',
-                          note: r.name,
-                        } as Transaction)
-                        await patch('recurring', r.id, { next_at: advanceRecurring(r) })
+                        if (payingRef.current.has(r.id)) return
+                        payingRef.current.add(r.id)
+                        setPaying(r.id)
+                        try {
+                          await db.transaction('rw', db.recurring, db.transactions, db.outbox, async () => {
+                            const current = await db.recurring.get(r.id)
+                            if (!current || current.deleted_at || current.next_at !== r.next_at) return
+                            const next = advanceRecurring(current)
+                            await put('transactions', {
+                              id: uid(), user_id: null, updated_at: '', deleted_at: null,
+                              at: new Date().toISOString(), amount: current.amount,
+                              category: 'Other', method: 'upi', note: current.name,
+                            } as Transaction)
+                            await patch('recurring', r.id, { next_at: next })
+                          })
+                          notify(`${r.name} payment logged; next due date updated`)
+                        } catch (error) {
+                          notify(error instanceof Error ? error.message : 'Payment could not be saved', 'crit')
+                        } finally {
+                          payingRef.current.delete(r.id)
+                          setPaying(null)
+                        }
                       }}
                     >
                       Paid
@@ -533,12 +581,13 @@ export default function Money() {
                       <button
                         type="button"
                         aria-label={`Log ${h.name} for today`}
+                        aria-pressed={s.doneToday}
                         onClick={async () => {
                           const key = today()
-                          const existing = habitLogs.find((l) => l.habit_id === h.id && l.date === key)
-                          if (existing) await remove('habit_logs', existing.id)
-                          else
-                            await put('habit_logs', {
+                          await db.transaction('rw', db.habit_logs, db.outbox, async () => {
+                            const existing = (await db.habit_logs.where('habit_id').equals(h.id).toArray()).filter((l) => l.date === key && !l.deleted_at)
+                            if (existing.length) for (const row of existing) await remove('habit_logs', row.id)
+                            else await put('habit_logs', {
                               id: uid(),
                               user_id: null,
                               updated_at: '',
@@ -547,6 +596,7 @@ export default function Money() {
                               date: key,
                               value: h.target,
                             } as HabitLog)
+                          })
                         }}
                         className={clsx(
                           'flex h-11 w-11 shrink-0 items-center justify-center rounded border text-[15px] sm:h-6 sm:w-6 sm:text-[12px]',
@@ -598,8 +648,10 @@ export default function Money() {
             className="mt-3 flex gap-2"
             onSubmit={async (e) => {
               e.preventDefault()
-              if (!newHabit.trim()) return
-              await put('habits', {
+              if (!newHabit.trim() || addingHabitRef.current) return
+              addingHabitRef.current = true
+              try {
+                await put('habits', {
                 id: uid(),
                 user_id: null,
                 updated_at: '',
@@ -609,18 +661,21 @@ export default function Money() {
                 target: 1,
                 colour: 'var(--ok)',
               } as Habit)
-              setNewHabit('')
+                setNewHabit('')
+              } catch { notify('Could not save this habit. Please try again.', 'crit') }
+              finally { addingHabitRef.current = false }
             }}
           >
             <input
               className="field py-1 text-[13px]"
+              aria-label="New habit"
               enterKeyHint="done"
               autoCapitalize="sentences"
               placeholder="Add a habit…"
               value={newHabit}
               onChange={(e) => setNewHabit(e.target.value)}
             />
-            <Button type="submit" size="sm">
+            <Button type="submit" size="sm" aria-label="Add habit">
               <Plus size={13} />
             </Button>
           </form>
@@ -635,7 +690,7 @@ export default function Money() {
                   className="flex items-center gap-3 border-b border-rule py-2 text-[13.5px] last:border-0"
                 >
                   <span className="font-mono text-[11.5px] text-ink-3">
-                    {t.at.slice(0, 10) === today() ? 'today' : prettyDay(dayKey(t.at))}
+                    {dayKey(t.at) === today() ? 'today' : prettyDay(dayKey(t.at))}
                   </span>
                   <Badge>{t.category}</Badge>
                   <span className="min-w-0 flex-1 truncate text-ink-2">{t.note}</span>
@@ -663,6 +718,12 @@ export default function Money() {
       </Modal>
       <Modal open={addingRecurring} onClose={() => setAddingRecurring(false)} title="Add recurring payment">
         <RecurringForm onDone={() => setAddingRecurring(false)} />
+      </Modal>
+      <Modal open={Boolean(editingBudget)} onClose={() => setEditingBudget(undefined)} title="Edit budget">
+        {editingBudget ? <BudgetForm month={month} budget={editingBudget} onDone={() => setEditingBudget(undefined)} /> : null}
+      </Modal>
+      <Modal open={Boolean(editingRecurring)} onClose={() => setEditingRecurring(undefined)} title="Edit recurring payment">
+        {editingRecurring ? <RecurringForm recurring={editingRecurring} onDone={() => setEditingRecurring(undefined)} /> : null}
       </Modal>
     </>
   )

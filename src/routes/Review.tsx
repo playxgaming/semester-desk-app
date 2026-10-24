@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Layers, Pause, Play, Plus, Printer, Trash2 } from 'lucide-react'
 import {
   Bar as RBar,
@@ -161,17 +161,25 @@ function AddCards({ onDone }: { onDone: () => void }) {
 }
 
 function Session({ queue, onExit }: { queue: CardRow[]; onExit: () => void }) {
+  // A review changes due_at immediately. Keep the starting queue stable so
+  // the live query cannot remove the card under the current index and skip one.
+  const [initialQueue] = useState(queue)
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
   const [done, setDone] = useState(0)
   const [again, setAgain] = useState<CardRow[]>([])
+  const [busy, setBusy] = useState(false)
+  const actionLock = useRef(false)
   const notify = useUi((s) => s.notify)
 
-  const list = useMemo(() => [...queue, ...again], [queue, again])
+  const list = useMemo(() => [...initialQueue, ...again], [initialQueue, again])
   const card = list[index]
 
   async function answer(g: Grade) {
-    if (!card) return
+    if (!card || actionLock.current) return
+    actionLock.current = true
+    setBusy(true)
+    try {
     const next = schedule(card, g)
     await patch('cards', card.id, {
       ease: next.ease,
@@ -191,32 +199,50 @@ function Session({ queue, onExit }: { queue: CardRow[]; onExit: () => void }) {
       prev_interval: card.interval,
       next_interval: next.interval,
     })
-    if (g === 0) setAgain((a) => (a.some((c) => c.id === card.id) ? a : [...a, card]))
+    if (g === 0) setAgain((a) => [...a, { ...card, ...next }])
     setDone((d) => d + 1)
     setRevealed(false)
     setIndex((i) => i + 1)
+    } finally {
+      actionLock.current = false
+      setBusy(false)
+    }
   }
 
   /** Not now: push it to tomorrow and move on, without touching its ease. */
   async function bury() {
-    if (!card) return
+    if (!card || actionLock.current) return
+    actionLock.current = true
+    setBusy(true)
+    try {
     await patch('cards', card.id, { due_at: addDays(new Date(), 1).toISOString() })
     notify(`Buried until tomorrow`, 'warn', async () => {
       await patch('cards', card.id, { due_at: card.due_at })
     })
     setRevealed(false)
     setIndex((i) => i + 1)
+    } finally {
+      actionLock.current = false
+      setBusy(false)
+    }
   }
 
   /** Not ever, for now: a card that is wrong, duplicated, or off the syllabus. */
   async function suspend() {
-    if (!card) return
+    if (!card || actionLock.current) return
+    actionLock.current = true
+    setBusy(true)
+    try {
     await patch('cards', card.id, { suspended: true })
     notify('Card suspended', 'warn', async () => {
       await patch('cards', card.id, { suspended: false })
     })
     setRevealed(false)
     setIndex((i) => i + 1)
+    } finally {
+      actionLock.current = false
+      setBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -317,6 +343,7 @@ function Session({ queue, onExit }: { queue: CardRow[]; onExit: () => void }) {
             {([0, 1, 2, 3] as Grade[]).map((g) => (
               <Button
                 key={g}
+                disabled={busy}
                 variant={g === 2 ? 'primary' : 'ghost'}
                 onClick={() => {
                   void answer(g)

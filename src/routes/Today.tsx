@@ -13,6 +13,7 @@ import {
   useRecurring,
   useCourseMap,
   useCourses,
+  useExceptions,
   useProfile,
   useSessionsOn,
   useSlots,
@@ -27,7 +28,7 @@ import { queueItems } from '@/lib/pipeline'
 import { dueSoon, habitStreak, rupees } from '@/lib/money'
 import { patch } from '@/db/mutate'
 import { patchWithUndo } from '@/lib/undoable'
-import { setSlotAttendance } from '@/db/attendance'
+import { setSlotAttendance, slotsOnDate } from '@/db/attendance'
 import { tap } from '@/lib/haptics'
 import type { Attendance, AttendanceStatus, TimetableSlot } from '@/db/db'
 import { useUi } from '@/store/ui'
@@ -98,6 +99,7 @@ export default function Today() {
   const courses = useCourses()
   const byId = useCourseMap()
   const slots = useSlots()
+  const exceptions = useExceptions()
   const attendance = useAttendance()
   const tasks = useTasks()
   const cards = useCards()
@@ -111,9 +113,7 @@ export default function Today() {
   const sessions = useSessionsOn(key)
   const notify = useUi((s) => s.notify)
 
-  const weekday = new Date().getDay()
-  const todaySlots = slots
-    .filter((s) => s.weekday === weekday)
+  const todaySlots = slotsOnDate(slots, key, exceptions)
     .sort((a, b) => a.start.localeCompare(b.start))
   const loggedToday = new Map(attendance.filter((a) => a.date === key).map((a) => [a.slot_id, a]))
 
@@ -140,7 +140,7 @@ export default function Today() {
       course: c,
       stats: attendanceStats(
         attendance.filter((a) => a.course_id === c.id),
-        c.attendance_threshold || profile.attendance_threshold,
+        c.attendance_threshold ?? profile.attendance_threshold,
       ),
     }))
     .filter((x) => x.stats.held > 0 && (!x.stats.meets || x.stats.canSkip === 0))
@@ -356,7 +356,7 @@ export default function Today() {
                 )
                 const att = attendanceStats(
                   attendance.filter((a) => a.course_id === c.id),
-                  c.attendance_threshold || profile.attendance_threshold,
+                  c.attendance_threshold ?? profile.attendance_threshold,
                 )
                 return (
                   <li key={c.id}>

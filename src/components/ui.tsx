@@ -156,14 +156,18 @@ export function Field({
   className,
   ...rest
 }: InputHTMLAttributes<HTMLInputElement> & { label?: string; hint?: string }) {
-  const id = useId()
+  const generatedId = useId()
+  const id = rest.id ?? generatedId
+  const hintId = `${generatedId}-hint`
+  const describedBy = [rest['aria-describedby'], hint ? hintId : null].filter(Boolean).join(' ') || undefined
   return (
-    <label className={clsx('block', className)} htmlFor={id}>
-      {label ? <span className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</span> : null}
+    <div className={clsx('block', className)}>
+      {label ? <label htmlFor={id} className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</label> : null}
       <input
         id={id}
         {...keyboardFor(rest.type)}
         {...rest}
+        aria-describedby={describedBy}
         // a stray scroll over a focused number input silently changes it
         onWheel={(e) => {
           if (rest.type === 'number') (e.target as HTMLInputElement).blur()
@@ -171,8 +175,8 @@ export function Field({
         }}
         className="field"
       />
-      {hint ? <span className="mt-1 block text-[11.5px] text-ink-3">{hint}</span> : null}
-    </label>
+      {hint ? <span id={hintId} className="mt-1 block text-[11.5px] text-ink-3">{hint}</span> : null}
+    </div>
   )
 }
 
@@ -181,10 +185,11 @@ export function TextArea({
   className,
   ...rest
 }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label?: string }) {
-  const id = useId()
+  const generatedId = useId()
+  const id = rest.id ?? generatedId
   return (
-    <label className={clsx('block', className)} htmlFor={id}>
-      {label ? <span className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</span> : null}
+    <div className={clsx('block', className)}>
+      {label ? <label htmlFor={id} className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</label> : null}
       <textarea
         id={id}
         enterKeyHint="enter"
@@ -192,7 +197,7 @@ export function TextArea({
         {...rest}
         className="field resize-y"
       />
-    </label>
+    </div>
   )
 }
 
@@ -202,14 +207,15 @@ export function Select({
   children,
   ...rest
 }: SelectHTMLAttributes<HTMLSelectElement> & { label?: string }) {
-  const id = useId()
+  const generatedId = useId()
+  const id = rest.id ?? generatedId
   return (
-    <label className={clsx('block', className)} htmlFor={id}>
-      {label ? <span className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</span> : null}
+    <div className={clsx('block', className)}>
+      {label ? <label htmlFor={id} className="mb-1 block text-[12.5px] font-medium text-ink-2">{label}</label> : null}
       <select id={id} {...rest} className="field">
         {children}
       </select>
-    </label>
+    </div>
   )
 }
 
@@ -374,21 +380,33 @@ export function Modal({
   wide?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
+    const previousFocus = document.activeElement as HTMLElement | null
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
     const t = window.setTimeout(() => {
-      ref.current?.querySelector<HTMLElement>('input,select,textarea,button')?.focus()
+      const dialog = ref.current
+      // Focus once when the dialog opens. Inline onClose callbacks change on
+      // every keystroke; depending on them used to steal focus back to Close.
+      // Prefer the first editable field rather than the header's Close button.
+      const field = dialog?.querySelector<HTMLElement>(
+        'input:not([type="hidden"]):not([disabled]),select:not([disabled]),textarea:not([disabled])',
+      )
+      const target = field ?? dialog?.querySelector<HTMLElement>('button:not([disabled])')
+      target?.focus()
     }, 10)
     return () => {
       document.removeEventListener('keydown', onKey)
       window.clearTimeout(t)
+      if (previousFocus?.isConnected) previousFocus.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   return (

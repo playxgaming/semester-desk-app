@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, type Course, type Profile } from '@/db/db'
 import { alive, defaultProfile, PROFILE_ID } from '@/db/mutate'
-import { today } from '@/lib/date'
+import { dayKey, today } from '@/lib/date'
 
 /**
  * Every read in the app goes through one of these. They all filter
@@ -25,15 +25,25 @@ export function useCourses(includeArchived = false): Course[] {
 }
 
 export function useCourse(id: string | undefined) {
-  return useLiveQuery(async () => (id ? db.courses.get(id) : undefined), [id])
+  return useLiveQuery(async () => {
+    const course = id ? await db.courses.get(id) : undefined
+    return course?.deleted_at ? undefined : course
+  }, [id])
+}
+
+/** Active queues exclude work belonging to finished or removed courses.
+ * Explicit course-detail queries still expose archived course history. */
+async function activeCourseIds() {
+  return new Set(alive(await db.courses.toArray()).filter((c) => !c.archived).map((c) => c.id))
 }
 
 export function useSlots(courseId?: string) {
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.timetable_slots.toArray())
+      const active = courseId ? null : await activeCourseIds()
       return rows
-        .filter((s) => !courseId || s.course_id === courseId)
+        .filter((s) => courseId ? s.course_id === courseId : active!.has(s.course_id))
         .sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start))
     }, [courseId]) ?? []
   )
@@ -65,8 +75,9 @@ export function useTopics(courseId?: string) {
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.topics.toArray())
+      const active = courseId ? null : await activeCourseIds()
       return rows
-        .filter((t) => !courseId || t.course_id === courseId)
+        .filter((t) => courseId ? t.course_id === courseId : active!.has(t.course_id))
         .sort((a, b) => a.order_index - b.order_index)
     }, [courseId]) ?? []
   )
@@ -76,7 +87,8 @@ export function useTasks(courseId?: string) {
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.tasks.toArray())
-      return rows.filter((t) => !courseId || t.course_id === courseId)
+      const active = courseId ? null : await activeCourseIds()
+      return rows.filter((t) => courseId ? t.course_id === courseId : !t.course_id || active!.has(t.course_id))
     }, [courseId]) ?? []
   )
 }
@@ -92,12 +104,18 @@ export function useSubtasks(taskId: string | undefined) {
 }
 
 export function useSessions() {
-  return useLiveQuery(async () => alive(await db.sessions.toArray()), []) ?? []
+  return useLiveQuery(async () => {
+    const active = await activeCourseIds()
+    return alive(await db.sessions.toArray()).filter((s) => !s.course_id || active.has(s.course_id))
+  }, []) ?? []
 }
 
 export function useSessionsOn(date: string) {
   return (
-    useLiveQuery(async () => alive(await db.sessions.where('date').equals(date).toArray()), [date]) ??
+    useLiveQuery(async () => {
+      const active = await activeCourseIds()
+      return alive(await db.sessions.where('date').equals(date).toArray()).filter((s) => !s.course_id || active.has(s.course_id))
+    }, [date]) ??
     []
   )
 }
@@ -106,7 +124,8 @@ export function useCards(courseId?: string) {
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.cards.toArray())
-      return rows.filter((c) => !courseId || c.course_id === courseId)
+      const active = courseId ? null : await activeCourseIds()
+      return rows.filter((c) => courseId ? c.course_id === courseId : !c.course_id || active!.has(c.course_id))
     }, [courseId]) ?? []
   )
 }
@@ -119,19 +138,21 @@ export function useNotes(courseId?: string) {
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.notes.toArray())
+      const active = courseId ? null : await activeCourseIds()
       return rows
-        .filter((n) => !courseId || n.course_id === courseId)
+        .filter((n) => courseId ? n.course_id === courseId : !n.course_id || active!.has(n.course_id))
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updated_at.localeCompare(a.updated_at))
     }, [courseId]) ?? []
   )
 }
 
 export function useFocusToday() {
+  const date = today()
   return (
     useLiveQuery(async () => {
       const rows = alive(await db.focus_sessions.toArray())
-      return rows.filter((f) => f.started.slice(0, 10) === today())
-    }, []) ?? []
+      return rows.filter((f) => dayKey(f.started) === date)
+    }, [date]) ?? []
   )
 }
 

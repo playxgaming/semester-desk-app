@@ -12,6 +12,8 @@ The site works without an API key for its local planner, attendance, notes, dead
 
 ## Optional AI backend
 
+For the guided setup, see [AI_SETUP.md](AI_SETUP.md). The included `render.yaml` can provision the server with a secret Gemini-key prompt. You can immediately test the resulting public server address in **Settings → AI connection** on one device, then bundle it for everyone using the repository variable below.
+
 No additional API is required for the offline app, GitHub Pages hosting, or APK builds. To enable **AI Tutor and Scanner** publicly, deploy the included `server/` directory to an HTTPS Node web service and provide a replacement Gemini key there.
 
 Use Node.js 22.9 or newer. Set the service root directory to `server`, the install command to `npm ci`, and the start command to `npm start`. The service must provide a `PORT` environment variable, or it listens on port 3001 by default.

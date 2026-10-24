@@ -28,28 +28,32 @@ export default function SmartScanner({ onClose, courseId }: { onClose?: () => vo
   const notify = useUi(s => s.notify)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState('')
   const [items, setItems] = useState<Item[] | null>(null)
   const [error, setError] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const generation = useRef(0)
+  const request = useRef<AbortController | null>(null)
+  useEffect(() => () => request.current?.abort(), [])
   useEffect(() => { if (!file) { setPreview(''); return }
     const url = URL.createObjectURL(file); setPreview(url)
     return () => URL.revokeObjectURL(url)
   }, [file])
   const close = () => {
-    if (busy) return
-    generation.current++; setOpen(false); setFile(null); setItems(null); setError(''); onClose?.()
+    if (saving) return
+    generation.current++; request.current?.abort(); setBusy(false); setOpen(false); setFile(null); setItems(null); setError(''); onClose?.()
   }
   const edit = (index: number, changes: Partial<Item>) => setItems(current => current?.map((item, i) => i === index ? { ...item, ...changes } : item) || null)
   const scan = async () => {
     if (!file || busy) return
     setBusy(true); setError('')
     const token = ++generation.current
+    const controller = new AbortController(); request.current = controller
     try {
       const form = new FormData(); form.append('document', file)
-      const result = await aiRequest<unknown>('scan-document', form)
+      const result = await aiRequest<unknown>('scan-document', form, controller.signal)
       if (!Array.isArray(result) || result.length > 100) throw new Error('Invalid scan response. Please try another image.')
       const rows: Item[] = result.map(raw => {
         if (!raw || typeof raw.title !== 'string' || !['class', 'deadline', 'exam', 'holiday'].includes(raw.type)) throw new Error('Invalid extracted item. Please retry.')
@@ -58,8 +62,8 @@ export default function SmartScanner({ onClose, courseId }: { onClose?: () => vo
         return { title: raw.title.slice(0, 200), type: raw.type, date: text('date'), startTime: text('startTime'), endTime: text('endTime'), dayOfWeek: Number.isInteger(raw.dayOfWeek) && raw.dayOfWeek >= 0 && raw.dayOfWeek <= 6 ? String(raw.dayOfWeek) : '', location: text('location'), course: courseId || matched?.id || '', selected: true }
       })
       if (token === generation.current) setItems(rows)
-    } catch (e) { setError(e instanceof Error ? e.message : 'Scanning failed.') }
-    finally { setBusy(false) }
+    } catch (e) { if (token === generation.current) setError(e instanceof Error ? e.message : 'Scanning failed.') }
+    finally { if (token === generation.current) { setBusy(false); request.current = null } }
   }
   const save = async () => {
     if (busy || !items) return
@@ -76,7 +80,7 @@ export default function SmartScanner({ onClose, courseId }: { onClose?: () => vo
         setError('Each deadline, exam, or holiday needs a valid date. Check any times too.'); return
       }
     }
-    setBusy(true); setError('')
+    setBusy(true); setSaving(true); setError('')
     try {
       // One transaction: an interrupted import cannot leave half a timetable.
       await db.transaction('rw', [db.tasks, db.timetable_slots, db.timetable_exceptions, db.outbox], async () => {
@@ -91,13 +95,13 @@ export default function SmartScanner({ onClose, courseId }: { onClose?: () => vo
         }
       })
       notify(`Imported ${chosen.length} items. Classes are in Timetable; exams and deadlines are in Deadlines.`)
-      setBusy(false); setOpen(false); setFile(null); setItems(null); onClose?.()
-    } catch { setError('Could not save the import. No items were added. Please try again.'); setBusy(false) }
+      setBusy(false); setSaving(false); setOpen(false); setFile(null); setItems(null); onClose?.()
+    } catch { setError('Could not save the import. No items were added. Please try again.'); setBusy(false); setSaving(false) }
   }
   return <>
     <Button onClick={() => setOpen(true)} className="text-accent"><Camera size={16} /> Scan Document</Button>
     <Modal open={open} onClose={close} title="Smart Scanner" footer={<div className="flex flex-wrap justify-end gap-3">
-      <Button onClick={close} disabled={busy}>Cancel</Button>
+      <Button onClick={close} disabled={saving}>{busy && !saving ? 'Cancel scan' : 'Cancel'}</Button>
       <Button variant="primary" onClick={items ? save : scan} disabled={busy || (items ? !items.some(i => i.selected) : !file)}>
         {busy && <Loader2 size={16} className="animate-spin" />}{busy ? 'Working…' : items ? `Import ${items.filter(i => i.selected).length} items` : 'Scan image'}
       </Button>

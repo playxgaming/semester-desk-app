@@ -1,4 +1,4 @@
-import { db, type Attendance, type AttendanceStatus, type TimetableSlot } from './db'
+import { db, type Attendance, type AttendanceStatus, type TimetableException, type TimetableSlot } from './db'
 import { alive, patch, put, remove } from './mutate'
 import { uid } from '@/lib/id'
 
@@ -18,13 +18,28 @@ import { uid } from '@/lib/id'
 
 export const CYCLE: AttendanceStatus[] = ['present', 'absent', 'cancelled', 'excused']
 
+/** Resolve the recurring timetable against this day's holidays and changes. */
+export function slotsOnDate(slots: TimetableSlot[], date: string, exceptions: TimetableException[] = []): TimetableSlot[] {
+  const changes = exceptions.filter((e) => !e.deleted_at && e.date === date)
+  if (changes.some((e) => !e.slot_id && (e.kind === 'holiday' || e.kind === 'cancelled'))) return []
+  const weekday = new Date(`${date}T00:00:00`).getDay()
+  return slots.flatMap((slot) => {
+    if (slot.deleted_at) return []
+    const matching = changes.filter((e) => e.slot_id === slot.id)
+    const change = matching[matching.length - 1]
+    if (change?.kind === 'cancelled' || change?.kind === 'holiday') return []
+    if (slot.weekday !== weekday && change?.kind !== 'extra' && change?.kind !== 'moved') return []
+    return [{ ...slot, start: change?.new_start ?? slot.start, end: change?.new_end ?? slot.end }]
+  })
+}
+
 export function slotsFor(
   slots: TimetableSlot[],
   courseId: string,
   date: string,
+  exceptions: TimetableException[] = [],
 ): TimetableSlot[] {
-  const weekday = new Date(`${date}T00:00:00`).getDay()
-  return slots.filter((s) => !s.deleted_at && s.course_id === courseId && s.weekday === weekday)
+  return slotsOnDate(slots, date, exceptions).filter((s) => s.course_id === courseId)
 }
 
 export function rowsFor(rows: Attendance[], courseId: string, date: string): Attendance[] {
@@ -48,8 +63,9 @@ export async function setAttendance(
   status: AttendanceStatus,
   slots: TimetableSlot[],
   existing: Attendance[],
+  exceptions: TimetableException[] = [],
 ): Promise<void> {
-  const daySlots = slotsFor(slots, courseId, date)
+  const daySlots = slotsFor(slots, courseId, date, exceptions)
   const current = rowsFor(existing, courseId, date)
 
   if (daySlots.length === 0) {

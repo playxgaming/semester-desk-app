@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +34,34 @@ jobs:
         env:
           VITE_AI_API_URL: ${{ vars.VITE_AI_API_URL }}
         run: npm run build
+
+      - name: Check AI API contracts
+        run: |
+          npm ci --prefix server
+          npm test --prefix server
+
+      - name: Install browser for regression checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify registration, category flows, Tutor, and offline storage
+        env:
+          BASE_URL: http://127.0.0.1:4173
+        run: |
+          npm run dev -- --host 127.0.0.1 > /tmp/semester-desk-dev.log 2>&1 &
+          npm run preview -- --host 127.0.0.1 > /tmp/semester-desk-preview.log 2>&1 &
+          for port in 5173 4173; do
+            curl --retry 20 --retry-delay 1 --retry-connrefused --fail "http://127.0.0.1:$port/" > /dev/null
+          done
+          APP_URL=http://127.0.0.1:4173 node scripts/onboarding-test.mjs
+          APP_URL=http://127.0.0.1:5173 node scripts/category-regression.mjs
+          BASE_URL=http://127.0.0.1:5173 node scripts/life-flows-test.mjs
+          node scripts/tutor-test.mjs
+          node scripts/scanner-cancel-test.mjs
+          node scripts/ai-flow-test.mjs
+          node scripts/install-test.mjs
+          node scripts/offline-test.mjs
+          npm run audit:flows
+          npm run audit:mobile
 
       - uses: actions/configure-pages@v5
 

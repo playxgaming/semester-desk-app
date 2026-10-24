@@ -2,6 +2,8 @@
 
 [Open the app](https://playxgaming.github.io/semester-desk-app/) · [Install / download](https://playxgaming.github.io/semester-desk-app/#/install) · [Android releases](https://github.com/playxgaming/semester-desk-app/releases/latest)
 
+[Enable AI Tutor and Scanner](AI_SETUP.md): one Gemini key on the backend, plus its public HTTPS address in Settings. Tutor supports saved conversations, follow-up questions, hints, and practice mode.
+
 An offline-first PWA for the whole semester — courses, timetable, attendance, deadlines, grades, a syllabus tracker, spaced repetition and a study planner that refuses to write a day you cannot execute.
 
 **The academic core works without a backend.** Courses, attendance, planning, notes, revision, and deterministic coaching run on your device. The optional AI Tutor and Smart Scanner use the Node server in `server/` and require your own server-side Gemini API key and internet access. See [HACKATHON.md](HACKATHON.md) for setup, deployment, verification, and a three-minute presentation script.
@@ -181,7 +183,7 @@ First load is **~63 KB gzipped** of JavaScript (app + Dexie + router) plus 14 KB
 The app is complete without this, and the Android build makes it largely moot. If you ever want the same data on a phone *and* a laptop:
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. Run `supabase/migrations/0001_init.sql`, then `0002_phase5.sql`, in its SQL editor. Row-level security is enabled on every table in the same migration that creates it — there is never a window where a table exists without a policy.
+2. Run the SQL migrations in order: `0001_init.sql`, `0002_phase5.sql`, and `0003_tutor_sequence.sql`. Row-level security is enabled on every table in the same migration that creates it.
 3. `cp .env.example .env` and paste in `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 4. Restart `npm run dev`, then **Settings → Sync** and sign in with a magic link.
 

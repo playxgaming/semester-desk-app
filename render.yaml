@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: semester-desk-ai
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
+      - key: ALLOWED_ORIGINS
+        value: https://playxgaming.github.io,https://localhost,http://localhost:5173,http://localhost:4173
+      - key: TRUST_PROXY_HOPS
+        value: '1'

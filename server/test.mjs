@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from './index.js';
+import { createApp, DEFAULT_MODEL, PROVIDER_TIMEOUT_MS, thinkingFor } from './index.js';
 
 async function withServer(options, fn) {
   const server = createApp(options).listen(0, '127.0.0.1');
@@ -73,4 +73,38 @@ test('provider quota errors are actionable and omit provider details', async () 
     assert.equal(response.status, 429);
     const body = await response.json(); assert.match(body.error, /quota/); assert.doesNotMatch(body.error, /secret/);
   });
+});
+
+test('provider calls make one short attempt on a fast model with thinking off', async () => {
+  const saved = { model: process.env.GEMINI_MODEL, budget: process.env.GEMINI_THINKING_BUDGET };
+  delete process.env.GEMINI_MODEL; delete process.env.GEMINI_THINKING_BUDGET;
+  try {
+    const requests = [];
+    await withServer({ generate: async options => { requests.push(options); return { text: options.config.responseMimeType ? '[]' : '4' }; } }, async url => {
+      assert.equal((await post(url, { problem: '2+2' })).status, 200);
+      const form = new FormData();
+      form.append('document', new Blob([Buffer.from('fake')], { type: 'image/png' }), 'timetable.png');
+      assert.equal((await fetch(`${url}/api/scan-document`, { method: 'POST', body: form })).status, 200);
+    });
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(request.model, DEFAULT_MODEL);
+      assert.equal(DEFAULT_MODEL, 'gemini-2.5-flash');
+      assert.deepEqual(request.config.httpOptions, { timeout: PROVIDER_TIMEOUT_MS, retryOptions: { attempts: 1 } });
+      assert.ok(PROVIDER_TIMEOUT_MS <= 30_000, 'server must give up well before the app does (75 s)');
+      assert.deepEqual(request.config.thinkingConfig, { thinkingBudget: 0 });
+    }
+  } finally {
+    for (const [key, value] of [['GEMINI_MODEL', saved.model], ['GEMINI_THINKING_BUDGET', saved.budget]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
+test('thinking budget applies only to 2.5 Flash models and ignores invalid values', () => {
+  assert.deepEqual(thinkingFor('gemini-2.5-flash', undefined), { thinkingConfig: { thinkingBudget: 0 } });
+  assert.deepEqual(thinkingFor('gemini-2.5-flash-lite', '512'), { thinkingConfig: { thinkingBudget: 512 } });
+  assert.deepEqual(thinkingFor('gemini-2.5-pro', '0'), {});
+  assert.deepEqual(thinkingFor('gemini-flash-latest', '0'), {});
+  assert.deepEqual(thinkingFor('gemini-2.5-flash', 'lots'), {});
 });

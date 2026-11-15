@@ -55,16 +55,47 @@ jobs:
       - name: Copy the build into the Android project
         run: npx cap sync android
 
-      - name: Assemble the demo APK
+      # Every build is signed with the same key from repository secrets, so a
+      # newer APK installs over an older one and keeps the user's data. Without
+      # the secrets the job stops instead of publishing a randomly signed APK.
+      - name: Restore the release signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "::error::Missing signing secrets. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS (see ANDROID.md, 'Release signing')."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Assemble the signed APK
         working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Android refuses an update whose versionCode is not higher than the
+          # installed one; the run number rises with every build.
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_NAME: 1.0.${{ github.run_number }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Verify the signature
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$APK" | tee out-signature.txt
+          grep -q "SHA-256 digest" out-signature.txt
+          rm -f "$RUNNER_TEMP/release.jks"
 
       - name: Prepare download
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/debug/app-debug.apk out/semester-desk.apk
+          cp android/app/build/outputs/apk/release/app-release.apk out/semester-desk.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,9 +114,9 @@ jobs:
           cat > out/release-notes.md <<'NOTES'
           Download **semester-desk.apk** below and open it on an Android phone.
 
-          This is a debug-signed demo build for sideloading, not a Play Store release. Android will ask you to allow installation from your browser or file manager. Core planning and storage work offline. AI Tutor and Scanner require a separately configured HTTPS backend.
+          This is a sideload build, not a Play Store release. Android will ask you to allow installation from your browser or file manager. Core planning and storage work offline. AI Tutor and Scanner require a separately configured HTTPS backend.
 
-          Export a backup in Settings before replacing an older installation. Debug signing keys can change between builds; Android may require uninstalling the old build, which removes its local data.
+          Every build is signed with the same key, so this APK installs over the previous one and keeps your data. Builds published before stable signing used temporary keys: if Android refuses this update, export a backup in Settings, uninstall the old app once, install this APK and restore the backup.
           NOTES
           gh release create "$RELEASE_TAG" out/semester-desk.apk \
             --target "$GITHUB_SHA" \

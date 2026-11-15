@@ -7,7 +7,10 @@ const BASE = process.env.APP_URL || 'http://127.0.0.1:5173'
 const browser = await chromium.launch({ args: ['--no-sandbox'] })
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'Asia/Kolkata' })
 const page = await context.newPage()
-page.setDefaultTimeout(8000)
+// Generous budget: CI runners are slow and IndexedDB writes are asynchronous.
+// Every wait below is for a visible state or a stored row, never a fixed sleep.
+const WAIT_MS = 15_000
+page.setDefaultTimeout(WAIT_MS)
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
 const results = []
@@ -20,12 +23,15 @@ async function step(name, fn) {
   } catch (error) {
     results.push(`FAIL ${name}: ${String(error).split('\n')[0]}`)
     console.log(results[results.length - 1])
+    console.log(error.stack)
     console.log((await page.locator('main').innerText()).slice(0, 800), (await page.getByRole('dialog').allTextContents()).join(' ').slice(0, 500))
   }
 }
 async function go(route) {
   await page.goto(`${BASE}/#/${route}`, { waitUntil: 'networkidle' })
-  await page.waitForTimeout(250)
+  // Routes are lazy chunks: wait for the page heading, not for a timer.
+  await page.locator('main h1').first().waitFor()
+  await page.getByText('Loading…', { exact: true }).waitFor({ state: 'detached' })
 }
 const rows = (table) => page.evaluate(async (table) => {
   const { db } = await import('/src/db/db.ts')
@@ -37,14 +43,27 @@ const patchRow = (table, id, changes) => page.evaluate(async ({ table, id, chang
 }, { table, id, changes })
 const dialog = () => page.getByRole('dialog')
 const button = (name) => page.getByRole('button', { name, exact: true })
-const waitRow = async (table, predicate) => {
-  for (let i = 0; i < 20; i++) {
-    const found = (await rows(table)).find(predicate)
-    if (found) return found
-    await page.waitForTimeout(100)
+// Poll until `read()` yields a value `accept` approves. Polling, not sleeping:
+// it returns as soon as the state is reached and fails only after WAIT_MS.
+async function until(read, accept, what) {
+  const deadline = Date.now() + WAIT_MS
+  let last
+  while (Date.now() < deadline) {
+    last = await read()
+    if (accept(last)) return last
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error(`Missing expected ${table} row`)
+  throw new Error(`Timed out waiting for ${what}; last value: ${JSON.stringify(last)?.slice(0, 200)}`)
 }
+const waitRow = async (table, predicate) =>
+  (await until(() => rows(table), (list) => list.some(predicate), `expected ${table} row`)).find(predicate)
+const waitRows = (table, predicate, what = `${table} rows`) => until(() => rows(table), predicate, what)
+const waitText = (locator, pattern) => until(() => locator.innerText(), (text) => pattern.test(text), String(pattern))
+const waitValue = (locator, pattern) => until(() => locator.inputValue(), (value) => pattern.test(value), String(pattern))
+const closed = () => dialog().waitFor({ state: 'detached' })
+// "Today" is the browser's (Asia/Kolkata), not the runner's UTC clock: near
+// midnight UTC the two disagree and a slot lands on the wrong weekday.
+const browserToday = () => page.evaluate(() => ({ weekday: new Date().getDay(), date: new Date().toLocaleDateString('en-CA') }))
 
 await go('courses')
 await page.evaluate(async () => {
@@ -64,22 +83,27 @@ await step('Courses: create, cancel edit, save edit; topic add/confidence/delete
   await dialog().getByLabel('Credits').fill('4')
   await dialog().getByLabel('Attendance threshold').selectOption('0')
   await button('Save course').click()
+  await closed()
   courseId = (await waitRow('courses', (row) => row.code === 'AUD101')).id
   await page.getByRole('link', { name: /AUD101/ }).click()
   await button('Edit course').click()
   await dialog().getByLabel('Title', { exact: true }).fill('Discard this')
   await dialog().getByRole('button', { name: 'Cancel', exact: true }).click()
+  await closed()
   assert.equal((await rows('courses'))[0].name, 'Audit course')
   await button('Edit course').click()
   await dialog().getByLabel('Title', { exact: true }).fill('Revised course')
   await button('Save course').click()
+  await closed()
   await waitRow('courses', (row) => row.name === 'Revised course')
   await page.getByPlaceholder('Add a topic…').fill('Audit topic')
   await page.getByLabel('Estimated minutes').fill('60')
   await page.getByPlaceholder('Add a topic…').press('Enter')
+  await waitRow('topics', (row) => row.name === 'Audit topic')
   await page.locator('[aria-label="Confidence for Audit topic"]').getByRole('button', { name: '2', exact: true }).click()
   await waitRow('topics', (row) => row.name === 'Audit topic' && row.confidence === 2)
   await page.getByRole('button', { name: 'Delete Audit topic', exact: true }).click()
+  await waitRows('topics', (list) => !list.some((row) => row.name === 'Audit topic'))
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
   await waitRow('topics', (row) => row.name === 'Audit topic')
 })
@@ -92,21 +116,30 @@ await step('Resource bank: Add files chooser, image preview, open icon, delete a
   await waitRow('attachments', (row) => row.name === 'audit.png')
   await page.locator('button.tap-text').filter({ hasText: 'audit.png' }).click()
   await dialog().getByRole('img', { name: 'audit.png', exact: true }).waitFor()
-  assert.ok(await dialog().getByRole('img', { name: 'audit.png', exact: true }).evaluate((image) => image.complete && image.naturalWidth > 0))
+  await until(
+    () => dialog().getByRole('img', { name: 'audit.png', exact: true }).evaluate((image) => image.complete && image.naturalWidth > 0),
+    Boolean,
+    'decoded image preview',
+  )
   await dialog().getByRole('button', { name: 'Close', exact: true }).click()
+  await closed()
   await button('Open audit.png').click()
   await dialog().getByRole('button', { name: 'Close', exact: true }).click()
+  await closed()
   await button('Delete audit.png').click()
+  await waitRows('attachments', (list) => !list.some((row) => row.name === 'audit.png'))
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
+  await waitRow('attachments', (row) => row.name === 'audit.png')
   await button('Open audit.png').click()
   await dialog().getByRole('img', { name: 'audit.png', exact: true }).waitFor()
   await dialog().getByRole('button', { name: 'Close', exact: true }).click()
+  await closed()
 })
 
 await step('Timetable: reject inverted time; add/edit slot; duplicate-safe holiday affects Today', async () => {
   await go('timetable')
   await button('Add slot').click()
-  await dialog().getByLabel('Day').selectOption(String(new Date().getDay()))
+  await dialog().getByLabel('Day').selectOption(String((await browserToday()).weekday))
   await dialog().getByLabel('Start', { exact: true }).fill('10:00')
   await dialog().getByLabel('End', { exact: true }).fill('09:00')
   await button('Save slot').click()
@@ -114,24 +147,35 @@ await step('Timetable: reject inverted time; add/edit slot; duplicate-safe holid
   await dialog().getByLabel('End', { exact: true }).fill('11:00')
   await dialog().getByLabel('Room').fill('Room 1')
   await button('Save slot').click()
+  await closed()
   await waitRow('timetable_slots', (row) => row.room === 'Room 1')
   await page.locator('main').getByRole('button', { name: /AUD101.*10:00/ }).click()
   await dialog().getByLabel('Room').fill('Room 2')
   await button('Save slot').click()
+  await closed()
   await waitRow('timetable_slots', (row) => row.room === 'Room 2')
   const date = await page.evaluate(() => new Date().toLocaleDateString('en-CA'))
   await page.getByLabel('Holiday date').fill(date)
   await button('Mark as holiday').click()
+  await waitRows('timetable_exceptions', (list) => list.length === 1)
+  // The form clears once the holiday is stored and the chip is listed; only
+  // then is a second submit a genuine duplicate attempt.
+  await waitValue(page.getByLabel('Holiday date'), /^$/)
+  await page.locator('button.chip').filter({ hasText: 'holiday' }).waitFor()
   await page.getByLabel('Holiday date').fill(date)
   await button('Mark as holiday').click()
+  // A rejected duplicate leaves the field filled; the stored count stays one.
+  await waitValue(page.getByLabel('Holiday date'), new RegExp(`^${date}$`))
   assert.equal((await rows('timetable_exceptions')).length, 1)
   await go('')
   assert.equal(await button('Present').count(), 0)
   await go('timetable')
   await page.locator('button.chip').filter({ hasText: 'holiday' }).click()
+  await waitRows('timetable_exceptions', (list) => list.length === 0)
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
   await page.locator('button.chip').filter({ hasText: 'holiday' }).waitFor()
   await page.locator('button.chip').filter({ hasText: 'holiday' }).click()
+  await waitRows('timetable_exceptions', (list) => list.length === 0)
 })
 
 await step('Attendance: Today and log update the same row; zero requirement remains zero', async () => {
@@ -139,7 +183,7 @@ await step('Attendance: Today and log update the same row; zero requirement rema
   await button('Present').click()
   await waitRow('attendance', (row) => row.status === 'present')
   await go('attendance')
-  assert.match(await page.locator('main').innerText(), /0% required|No attendance requirement/)
+  await waitText(page.locator('main'), /0% required|No attendance requirement/)
   await page.locator('main').getByRole('button', { name: /AUD101.*P/ }).first().click()
   await waitRow('attendance', (row) => row.status === 'absent')
   assert.equal((await rows('attendance')).length, 1)
@@ -156,27 +200,33 @@ await step('Deadlines: create/edit, subtasks add/toggle/delete/undo, done/reopen
   await dialog().getByLabel('Estimated effort (minutes)').fill('60')
   await dialog().getByLabel('Notes', { exact: true }).fill('Deliver working project')
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+  await closed()
   taskId = (await waitRow('tasks', (row) => row.title === 'Audit project')).id
   await button('Audit project').click()
   await page.getByPlaceholder('Break it into a step…').fill('Audit subtask')
   await page.getByPlaceholder('Break it into a step…').press('Enter')
+  await waitRow('subtasks', (row) => row.title === 'Audit subtask')
   await page.getByLabel('Mark step done: Audit subtask').click()
   await waitRow('subtasks', (row) => row.done)
   await page.getByRole('button', { name: 'Delete step', exact: true }).click()
+  await waitRows('subtasks', (list) => list.length === 0)
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
   await waitRow('subtasks', (row) => row.title === 'Audit subtask')
   await button('Edit').click()
   await dialog().getByLabel('What is due').fill('Revised project')
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+  await closed()
+  await waitRow('tasks', (row) => row.title === 'Revised project')
   await page.getByLabel('Mark Revised project done').click()
   await page.getByRole('button', { name: /^Done \(1\)$/ }).click()
   await page.getByLabel('Mark Revised project done').click()
   await page.getByRole('button', { name: /^Open \(1\)$/ }).click()
+  await button('Revised project').or(button('Edit')).first().waitFor()
   if (!(await button('Edit').count())) await button('Revised project').click()
   await button('Edit').click()
   await dialog().getByRole('button', { name: /Delete/ }).click()
-  await page.waitForTimeout(150)
-  assert.equal((await rows('tasks')).length, 0)
+  await closed()
+  await waitRows('tasks', (list) => list.length === 0, 'all tasks deleted')
 })
 
 await step('Grades: create, edit, invalid score prevention, overweight prevention, delete', async () => {
@@ -187,13 +237,18 @@ await step('Grades: create, edit, invalid score prevention, overweight preventio
   await dialog().getByLabel('Out of').fill('50')
   await dialog().getByLabel('Score', { exact: true }).fill('40')
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+  await closed()
   await waitRow('assessments', (row) => row.score === 40)
   await page.locator('main').getByRole('button', { name: /Audit exam/ }).click()
   await dialog().getByLabel('Score', { exact: true }).fill('60')
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+  // The field's own max blocks the submit; the dialog stays open on an invalid field.
+  assert.equal(await dialog().getByLabel('Score', { exact: true }).evaluate((input) => input.validity.rangeOverflow), true)
+  await dialog().getByRole('button', { name: 'Save', exact: true }).waitFor()
   assert.equal((await rows('assessments'))[0].score, 40)
   await dialog().getByLabel('Score', { exact: true }).fill('45')
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+  await closed()
   await waitRow('assessments', (row) => row.score === 45)
   await button('Assessment').click()
   await dialog().getByLabel('Title', { exact: true }).fill('Overweight exam')
@@ -201,10 +256,11 @@ await step('Grades: create, edit, invalid score prevention, overweight preventio
   await dialog().getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByRole('status').filter({ hasText: /110%/ }).waitFor()
   await dialog().getByRole('button', { name: 'Cancel', exact: true }).click()
+  await closed()
   await page.locator('main').getByRole('button', { name: /Audit exam/ }).click()
   await dialog().getByRole('button', { name: /Delete/ }).click()
-  await page.waitForTimeout(150)
-  assert.equal((await rows('assessments')).length, 0)
+  await closed()
+  await waitRows('assessments', (list) => list.length === 0, 'all assessments deleted')
 })
 
 await step('Notes: create/edit/save, pin does not erase draft, course/topic, search, delete/undo', async () => {
@@ -219,25 +275,29 @@ await step('Notes: create/edit/save, pin does not erase draft, course/topic, sea
   assert.equal(await page.locator('main textarea').inputValue(), 'Unsaved draft must survive metadata edits')
   await page.getByLabel('Course').selectOption(courseId)
   await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await waitRow('notes', (row) => row.body_md === 'Unsaved draft must survive metadata edits' && row.course_id === courseId)
   await button('Preview').click()
   await page.getByText('Unsaved draft must survive metadata edits', { exact: true }).last().waitFor()
   await page.getByRole('button', { name: 'Earlier versions of this note', exact: true }).click()
   await dialog().getByRole('button', { name: 'Read', exact: true }).first().click()
   await dialog().getByRole('button', { name: 'Hide', exact: true }).first().click()
   await dialog().getByRole('button', { name: 'Restore', exact: true }).first().click()
+  await closed()
   await button('Edit').click()
-  assert.match(await page.locator('main textarea').inputValue(), /Planet/)
+  await waitValue(page.locator('main textarea'), /Planet/)
   await button('Preview').click()
   await button('Make cards').click()
   await dialog().getByRole('button', { name: 'Select none', exact: true }).click()
   assert.ok(await dialog().getByRole('button', { name: 'Add 0 cards', exact: true }).isDisabled())
   await dialog().getByRole('button', { name: 'Select all', exact: true }).click()
   await dialog().getByRole('button', { name: 'Add 1 card', exact: true }).click()
+  await closed()
   const extracted = await waitRow('cards', (row) => row.front.includes('Planet'))
   await page.evaluate(async (id) => { const { remove } = await import('/src/db/mutate.ts'); await remove('cards', id) }, extracted.id)
   await page.getByPlaceholder('Search notes…').fill('Audit note')
-  assert.equal(await page.locator('main ul').first().locator('li').count(), 1)
+  await until(() => page.locator('main ul').first().locator('li').count(), (count) => count === 1, 'one search result')
   await page.getByRole('button', { name: /Delete note/ }).click()
+  await waitRows('notes', (list) => !list.some((row) => row.title === 'Audit note'))
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
   await waitRow('notes', (row) => row.title === 'Audit note')
 })
@@ -250,32 +310,37 @@ await step('Review: add single/cloze cards, suspend/restore, grade every due car
   await dialog().getByLabel('Back', { exact: true }).fill('First audit answer')
   await dialog().getByRole('checkbox').check()
   await dialog().getByRole('button', { name: 'Add card', exact: true }).click()
+  await closed()
+  await waitRow('cards', (row) => row.front === 'First audit question')
   await button('Add cards').click()
   await dialog().getByLabel('Course').selectOption(courseId)
   await dialog().getByPlaceholder('A deadlock needs {{c1::mutual exclusion}}, {{c2::hold and wait}}, {{c3::no preemption}} and {{c4::circular wait}}.').fill('The {{c1::Earth}} circles the {{c2::Sun}}.')
   await dialog().getByRole('button', { name: 'Add 2 cloze cards', exact: true }).click()
-  await waitRow('cards', (row) => row.front.includes('circles'))
-  assert.equal((await rows('cards')).length, 3)
+  await closed()
+  await waitRows('cards', (list) => list.length === 3, 'three cards')
   await page.getByRole('button', { name: 'Suspend: First audit question', exact: true }).click()
   await waitRow('cards', (row) => row.suspended)
   await page.getByRole('button', { name: 'Bring back: First audit question', exact: true }).click()
+  await waitRows('cards', (list) => list.every((row) => !row.suspended), 'no suspended cards')
   await page.getByRole('button', { name: 'Review 3', exact: true }).click()
   for (let i = 0; i < 3; i++) {
     await button('Show answer space').click()
     await page.getByRole('button', { name: /^Good/ }).click()
-    await page.waitForTimeout(180)
+    await waitRows('reviews', (list) => list.length === i + 1, `${i + 1} reviews`)
   }
   await page.getByText('Session finished', { exact: true }).waitFor()
   assert.equal((await rows('reviews')).length, 3)
   assert.ok((await rows('cards')).every((row) => row.reps === 1))
   await button('Back to decks').click()
   await button('Formula sheet').click()
-  assert.match(await dialog().innerText(), /First audit answer/)
+  await waitText(dialog(), /First audit answer/)
   await page.evaluate(() => { window.print = () => { window.__auditPrinted = true } })
   await dialog().getByRole('button', { name: 'Print', exact: true }).click()
   assert.equal(await page.evaluate(() => window.__auditPrinted), true)
   await dialog().getByRole('button', { name: 'Close', exact: true }).click()
+  await closed()
   await page.getByRole('button', { name: 'Delete card: First audit question', exact: true }).click()
+  await waitRows('cards', (list) => !list.some((row) => row.front === 'First audit question'))
   await page.getByRole('status').getByRole('button', { name: 'Undo' }).click()
   await waitRow('cards', (row) => row.front === 'First audit question')
 })
@@ -286,12 +351,16 @@ await step('Review: Again requeues updated card; bury and suspend advance safely
   await page.getByRole('button', { name: 'Review 3', exact: true }).click()
   await button('Show answer space').click()
   await page.getByRole('button', { name: /^Again/ }).click()
+  await waitRows('reviews', (list) => list.length === 4, 'the Again review')
+  const soon = new Date(Date.now() + 12 * 3600_000).toISOString()
   await button('Bury').click()
+  await waitRows('cards', (list) => list.some((row) => row.due_at > soon), 'a buried card')
   await button('Suspend').click()
+  await waitRow('cards', (row) => row.suspended)
   await button('Show answer space').click()
   await page.getByRole('button', { name: /^Good/ }).click()
   await page.getByText('Session finished', { exact: true }).waitFor()
-  assert.equal((await rows('reviews')).length, 5)
+  await waitRows('reviews', (list) => list.length === 5, 'five reviews')
 })
 
 await step('Planner: preview/rebuild, horizons, done action, preserved completed capacity, clear', async () => {
@@ -304,9 +373,10 @@ await step('Planner: preview/rebuild, horizons, done action, preserved completed
   await button('Done').first().click()
   await waitRow('sessions', (row) => row.status === 'done')
   await button('Rebuild plan').click()
+  // The button stays disabled while the plan is written; clearing earlier would race it.
+  await until(() => button('Rebuild plan').isEnabled(), Boolean, 'rebuild to finish')
   await button('Clear planned blocks').click()
-  await page.waitForTimeout(200)
-  assert.equal((await rows('sessions')).filter((row) => row.status === 'planned').length, 0)
+  await waitRows('sessions', (list) => !list.some((row) => row.status === 'planned'), 'no planned sessions')
   const missedId = await page.evaluate(async (courseId) => {
     const { put } = await import('/src/db/mutate.ts')
     const date = new Date(); date.setDate(date.getDate() - 1)
@@ -314,7 +384,8 @@ await step('Planner: preview/rebuild, horizons, done action, preserved completed
     return row.id
   }, courseId)
   await page.getByRole('button', { name: /Catch up 1 missed/ }).click()
-  await waitRow('sessions', (row) => row.id === missedId && row.date >= new Date().toLocaleDateString('en-CA'))
+  const { date: today } = await browserToday()
+  await waitRow('sessions', (row) => row.id === missedId && row.date >= today)
 })
 
 await step('Focus: start/pause/resume, interruption, refresh recovery, reset; expired block logged', async () => {
@@ -322,19 +393,22 @@ await step('Focus: start/pause/resume, interruption, refresh recovery, reset; ex
   await page.getByLabel('Course').selectOption(courseId)
   await button('50 / 10').click()
   await button('Start').click()
-  await page.waitForTimeout(1200)
+  // Let the clock tick once so Pause leaves a partial block (the button then reads Resume).
+  await waitText(page.locator('main'), /49:5\d/)
   await page.getByRole('button', { name: /^Interrupted/ }).click()
+  await waitText(page.getByRole('button', { name: /^Interrupted/ }), /\(1\)/)
   await button('Pause').click()
   await button('Resume').click()
+  await button('Pause').waitFor()
   await page.reload({ waitUntil: 'networkidle' })
   await button('Pause').waitFor()
-  assert.match(await page.getByRole('button', { name: /^Interrupted/ }).innerText(), /\(1\)/)
+  await waitText(page.getByRole('button', { name: /^Interrupted/ }), /\(1\)/)
   await button('Reset').click()
-  assert.match(await page.getByRole('button', { name: /^Interrupted/ }).innerText(), /\(0\)/)
+  await waitText(page.getByRole('button', { name: /^Interrupted/ }), /\(0\)/)
   await page.evaluate(() => localStorage.setItem('semester-desk:focus-run', JSON.stringify({ endsAt: Date.now() - 1000, phase: 'work', work: 25, brk: 5, courseId: '', taskId: '', interruptions: 2, started: new Date(Date.now() - 25 * 60000).toISOString() })))
   await page.reload({ waitUntil: 'networkidle' })
   await waitRow('focus_sessions', (row) => row.minutes === 25 && row.interruptions === 2)
-  assert.match(await page.locator('main').innerText(), /25m/)
+  await waitText(page.locator('main'), /25m/)
   await button('Reset').click()
 })
 
@@ -351,6 +425,8 @@ await step('Coach: weekly review, critique horizon, quiz complete, another round
   await button('Start a 10-question quiz').click()
   for (let i = 0; i < 3; i++) {
     const reveal = button('Show the answer')
+    // Wait for the question to render before deciding which kind it is.
+    await reveal.or(page.locator('main ul button')).first().waitFor()
     if (await reveal.count()) {
       await reveal.click()
       await button('I had it').click()
@@ -364,9 +440,9 @@ await step('Coach: weekly review, critique horizon, quiz complete, another round
 await step('Course archive hides dependent queues; restore and delete hides route', async () => {
   await patchRow('courses', courseId, { archived: true })
   await go('timetable')
-  assert.match(await page.locator('main').innerText(), /No slots yet/)
+  await page.getByText('No slots yet', { exact: true }).waitFor()
   await go('review')
-  assert.match(await page.locator('main').innerText(), /No cards yet/)
+  await page.getByText('No cards yet', { exact: true }).waitFor()
   await patchRow('courses', courseId, { archived: false })
   await go(`courses/${courseId}`)
   await button('Edit course').click()

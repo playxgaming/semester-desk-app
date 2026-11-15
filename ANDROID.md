@@ -2,15 +2,15 @@
 
 ## Android APK
 
-After a successful **Android APK** workflow, the newest debug APK is available from [GitHub Releases](https://github.com/playxgaming/semester-desk-app/releases/latest) or the [direct APK download](https://github.com/playxgaming/semester-desk-app/releases/latest/download/semester-desk.apk). A download link becomes usable only after the first successful build publishes its release.
+After a successful **Android APK** workflow, the newest APK is available from [GitHub Releases](https://github.com/playxgaming/semester-desk-app/releases/latest) or the [direct APK download](https://github.com/playxgaming/semester-desk-app/releases/latest/download/semester-desk.apk). A download link becomes usable only after the first successful build publishes its release.
 
 1. Download `semester-desk.apk` on an Android phone and open it.
 2. Allow installation from the browser or file manager when Android prompts.
 3. Open Semester Desk. Core planning, attendance, notes, and data storage work offline.
 
-This APK is a **debug-signed demo build** for sideloading. It is not a signed Play Store release. AI Tutor and Scanner require internet access and a separately configured AI backend; the API key is kept on that server. Public-holiday import also uses the internet.
+This APK is a sideload build, not a Play Store release. AI Tutor and Scanner require internet access and a separately configured AI backend; the API key is kept on that server. Public-holiday import also uses the internet.
 
-Before replacing an existing installation, export a JSON backup in Settings. GitHub runners can generate different debug signing keys. If Android refuses an update, export your data, uninstall the older app, install the new APK, and restore the backup. Uninstalling or clearing app storage deletes local data.
+Every build is signed with the same release key and has a higher version code, so a new APK installs over the old one and keeps your data. Builds published before stable signing used temporary keys: if Android refuses an update, export a JSON backup in Settings, uninstall the old app once, install the new APK, and restore the backup. Uninstalling or clearing app storage deletes local data.
 
 ## Install the website
 
@@ -22,7 +22,7 @@ Web reminders are limited to when the app is open. The Android wrapper schedules
 
 The **Android APK** workflow runs on code pushes to `main`. You can also choose **Actions → Android APK → Run workflow** and select `main`.
 
-It installs dependencies with Node.js 22, checks planner calculations, builds the frontend, syncs Capacitor, and assembles the Android project with JDK 17. On success it uploads a run artifact and publishes a GitHub Release containing `semester-desk.apk`. Each release has its own tag, and the newest release is marked latest. Failed builds do not publish an APK.
+It installs dependencies with Node.js 22, checks planner calculations, builds the frontend, syncs Capacitor, and assembles a release APK with JDK 17, signed with the key in the repository secrets (see [Release signing](#release-signing)) and with `versionCode` set to the workflow run number. The job fails if the signing secrets are missing. On success it uploads a run artifact and publishes a GitHub Release containing `semester-desk.apk`. Each release has its own tag, and the newest release is marked latest. Failed builds do not publish an APK.
 
 The repository variable `VITE_AI_API_URL` optionally supplies the HTTPS backend origin to both Android and website builds. Set it before running the workflows, then rebuild both after changing it. See [DEPLOYMENT.md](DEPLOYMENT.md) for backend configuration. No Gemini key belongs in a `VITE_` variable or in an APK.
 
@@ -53,8 +53,31 @@ Android reminders use the device's alarm scheduler. The app schedules up to 60 r
 
 Data is stored in the app's IndexedDB database. Export it through **Settings → Export JSON** before reinstalling, clearing app storage, or changing devices. Website and Android storage are separate; transfer data using export and import.
 
-## Production signing
+## Release signing
 
-For a production Android release, create a private signing keystore, keep it outside Git, and configure release signing through protected CI secrets. Update the workflow to assemble the signed release build and maintain its version code for updates. The current workflow deliberately builds only the debug demo.
+Android installs an update only when it is signed with the same certificate as the installed app and its `versionCode` is higher. The workflow takes the key from four repository secrets and the version code from `github.run_number`.
+
+Create the key once and keep the `.jks` file and its password somewhere safe outside Git (a password manager). **If the key is lost, installed apps can never be updated again without uninstalling.**
+
+1. Create the keystore with `keytool` from JDK 17 (Android Studio ships one at `C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe`). It asks for a password and your name; use one strong password:
+
+   ```bash
+   keytool -genkeypair -v -keystore semester-desk-release.jks -alias semesterdesk -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. Add the secrets with the GitHub CLI from the folder that holds the `.jks` file (Git Bash; each `gh secret set` without `--body` prompts for the value):
+
+   ```bash
+   base64 -w0 semester-desk-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo playxgaming/semester-desk-app
+   gh secret set ANDROID_KEYSTORE_PASSWORD --repo playxgaming/semester-desk-app
+   gh secret set ANDROID_KEY_PASSWORD --repo playxgaming/semester-desk-app
+   gh secret set ANDROID_KEY_ALIAS --body semesterdesk --repo playxgaming/semester-desk-app
+   ```
+
+   Enter the keystore password for both password secrets (`keytool` uses the same password for the key). Without the CLI, use **Settings → Secrets and variables → Actions → New repository secret** and paste the output of `[Convert]::ToBase64String([IO.File]::ReadAllBytes("semester-desk-release.jks"))` (PowerShell) as `ANDROID_KEYSTORE_BASE64`.
+
+3. Run **Actions → Android APK → Run workflow** on `main`. The **Verify the signature** step prints the certificate's SHA-256 digest; it must be the same on every later run.
+
+Local `npm run android:apk` builds stay debug-signed and are not meant to replace a phone's installed CI build.
 
 iOS native builds require a Mac and Apple's signing setup; this repository currently provides the installable website and Android project.

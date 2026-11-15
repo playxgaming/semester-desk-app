@@ -61,6 +61,9 @@ const waitRows = (table, predicate, what = `${table} rows`) => until(() => rows(
 const waitText = (locator, pattern) => until(() => locator.innerText(), (text) => pattern.test(text), String(pattern))
 const waitValue = (locator, pattern) => until(() => locator.inputValue(), (value) => pattern.test(value), String(pattern))
 const closed = () => dialog().waitFor({ state: 'detached' })
+// "Today" is the browser's (Asia/Kolkata), not the runner's UTC clock: near
+// midnight UTC the two disagree and a slot lands on the wrong weekday.
+const browserToday = () => page.evaluate(() => ({ weekday: new Date().getDay(), date: new Date().toLocaleDateString('en-CA') }))
 
 await go('courses')
 await page.evaluate(async () => {
@@ -136,7 +139,7 @@ await step('Resource bank: Add files chooser, image preview, open icon, delete a
 await step('Timetable: reject inverted time; add/edit slot; duplicate-safe holiday affects Today', async () => {
   await go('timetable')
   await button('Add slot').click()
-  await dialog().getByLabel('Day').selectOption(String(new Date().getDay()))
+  await dialog().getByLabel('Day').selectOption(String((await browserToday()).weekday))
   await dialog().getByLabel('Start', { exact: true }).fill('10:00')
   await dialog().getByLabel('End', { exact: true }).fill('09:00')
   await button('Save slot').click()
@@ -381,7 +384,8 @@ await step('Planner: preview/rebuild, horizons, done action, preserved completed
     return row.id
   }, courseId)
   await page.getByRole('button', { name: /Catch up 1 missed/ }).click()
-  await waitRow('sessions', (row) => row.id === missedId && row.date >= new Date().toLocaleDateString('en-CA'))
+  const { date: today } = await browserToday()
+  await waitRow('sessions', (row) => row.id === missedId && row.date >= today)
 })
 
 await step('Focus: start/pause/resume, interruption, refresh recovery, reset; expired block logged', async () => {

@@ -6,7 +6,9 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:5173'
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Kolkata' })
 const page = await context.newPage()
-page.setDefaultTimeout(8000)
+// CI runners are slow; every wait is for a visible state or stored row.
+const WAIT_MS = 15_000
+page.setDefaultTimeout(WAIT_MS)
 const errors = []
 const results = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -30,6 +32,8 @@ const check = async (name, run) => {
   }
 }
 const dialog = () => page.getByRole('dialog')
+// A modal still on screen intercepts clicks meant for the page behind it.
+const closed = () => dialog().waitFor({ state: 'detached' })
 const waitRows = async (table, predicate) => {
   await page.waitForFunction(async ({ table, predicate }) => {
     const { db } = await import('/src/db/db.ts')
@@ -116,12 +120,19 @@ try {
     await dialog().getByLabel('Next due', { exact: true }).fill('')
     await dialog().getByLabel('Next due', { exact: true }).fill('2030-01-31')
     await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+    await closed()
+    await waitRows('recurring', (rows) => rows.some((row) => row.name === 'Audit rent' && row.next_at.startsWith('2030-01-31')))
     await page.getByRole('button', { name: 'Edit Audit rent', exact: true }).click()
     await dialog().getByLabel('Amount (₹)', { exact: true }).fill('1300.50')
     await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+    await closed()
+    await waitRows('recurring', (rows) => rows.some((row) => row.name === 'Audit rent' && row.amount === 1300.5))
     const rent = page.getByRole('button', { name: 'Edit Audit rent', exact: true }).locator('..')
+    // Paid reads the row it was rendered with; wait until the list shows the edited amount.
+    await rent.getByText(/1,301/).waitFor()
     await rent.getByRole('button', { name: 'Paid', exact: true }).click({ clickCount: 2 })
     await waitRows('recurring', (rows) => rows.some((row) => row.name === 'Audit rent' && row.next_at.startsWith('2030-02-28')))
+    await waitRows('transactions', (rows) => rows.some((row) => row.note === 'Audit rent'))
     assert.equal((await rows('transactions')).filter((row) => row.note === 'Audit rent').length, 1)
     assert.equal((await rows('transactions')).find((row) => row.note === 'Audit rent').amount, 1300.5)
     const calendar = await page.evaluate(async () => {
@@ -204,14 +215,19 @@ try {
     await dialog().getByLabel('Email', { exact: true }).fill('mentor@example.com')
     await dialog().getByLabel('Follow up on', { exact: true }).fill('2026-01-01')
     await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+    await closed()
+    await waitRows('contacts', (rows) => rows.some((row) => row.name === 'Audit Mentor'))
     await page.getByRole('button', { name: 'Audit Mentor', exact: true }).click()
     assert.equal(await dialog().getByLabel('Follow up on').inputValue(), '2026-01-01')
     await dialog().getByLabel('Context', { exact: true }).fill('Audit context')
     await dialog().getByRole('button', { name: 'Save', exact: true }).click()
+    await closed()
+    await waitRows('contacts', (rows) => rows.some((row) => row.name === 'Audit Mentor' && row.note === 'Audit context'))
     await page.getByRole('button', { name: 'Audit Mentor', exact: true }).locator('..').getByRole('button', { name: 'Touched', exact: true }).click()
     await waitRows('contacts', (rows) => rows.some((row) => row.name === 'Audit Mentor' && row.last_touch && row.follow_up_at > new Date().toISOString()))
     await page.getByRole('button', { name: 'Audit Mentor', exact: true }).click()
     await dialog().getByRole('button', { name: 'Delete contact', exact: true }).click()
+    await closed()
     await waitRows('contacts', (rows) => !rows.some((row) => row.name === 'Audit Mentor'))
   })
 

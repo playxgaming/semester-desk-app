@@ -13,7 +13,9 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-flash-latest
+        value: gemini-2.5-flash
+      - key: GEMINI_THINKING_BUDGET
+        value: '0'
       - key: ALLOWED_ORIGINS
         value: https://playxgaming.github.io,https://localhost,http://localhost:5173,http://localhost:4173
       - key: TRUST_PROXY_HOPS

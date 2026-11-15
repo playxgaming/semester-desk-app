@@ -9,7 +9,8 @@ The app's academic tools work locally. Live AI needs one provider key and one se
 | `GEMINI_API_KEY` | Render server environment; never in GitHub source or browser fields | Tutor and image Scanner |
 | `VITE_AI_API_URL` | GitHub repository Actions variable, or the public server address in app Settings → AI connection | Connecting the app to that server; this is a URL, not a secret |
 | `ALLOWED_ORIGINS` | Server environment; the Blueprint supplies the website and Android defaults | Allowing browser / Android requests |
-| `GEMINI_MODEL` | Server environment; default supplied | Optional model override |
+| `GEMINI_MODEL` | Server environment; default `gemini-2.5-flash` | Optional model override |
+| `GEMINI_THINKING_BUDGET` | Server environment; default `0` | Thinking tokens for 2.5 Flash models (`0` off, `-1` dynamic) |
 | `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` | Frontend build variables | Optional cross-device sync only; not needed for AI or local tools |
 
 No OpenAI, OCR, Maps, payment, or notification API key is required. The same Gemini key handles Tutor and image extraction. Browser reminders work while open; native Android reminders use the device's notification permission.

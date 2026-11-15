@@ -22,7 +22,8 @@ Set these variables on that server:
 
 ```dotenv
 GEMINI_API_KEY=your-replacement-key
-GEMINI_MODEL=gemini-flash-latest
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_THINKING_BUDGET=0
 ALLOWED_ORIGINS=https://playxgaming.github.io,https://localhost
 ```
 
@@ -38,6 +39,6 @@ The included in-memory rate limit supports a small demo. For unrestricted public
 
 ## Android downloads
 
-The **Android APK** workflow publishes a debug-signed demo only after a successful `main` build. The APK is bundled with the frontend; it uses the optional backend solely for AI. Download and installation details, backup advice, and local build commands are in [ANDROID.md](ANDROID.md).
+The **Android APK** workflow publishes an APK signed with the stable release key from the repository secrets, only after a successful `main` build. The APK is bundled with the frontend; it uses the optional backend solely for AI. Download and installation details, backup advice, and local build commands are in [ANDROID.md](ANDROID.md).
 
 A GitHub Release artifact proves the APK was assembled. Verify installation, launch, and reminders on a physical phone before claiming device testing or Play Store readiness.
